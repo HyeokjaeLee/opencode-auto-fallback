@@ -1,4 +1,4 @@
-export { createPlugin as FallbackPlugin } from "./src/plugin"
+export { createPlugin as AutoFallbackPlugin } from "./src/plugin"
 
 export type {
   FallbackConfig,

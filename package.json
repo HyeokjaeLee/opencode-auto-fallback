@@ -1,5 +1,5 @@
 {
-  "name": "opencode-fallback",
+  "name": "opencode-auto-fallback",
   "version": "0.0.1",
   "description": "OpenCode plugin that automatically switches to a fallback model when rate limits are hit",
   "type": "module",
@@ -22,7 +22,7 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/HyeokjaeLee/opencode-fallback.git"
+    "url": "https://github.com/HyeokjaeLee/opencode-auto-fallback.git"
   },
   "peerDependencies": {
     "@opencode-ai/plugin": ">=1.0.0"
