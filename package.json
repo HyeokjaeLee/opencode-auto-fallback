@@ -1,0 +1,36 @@
+{
+  "name": "opencode-fallback",
+  "version": "0.0.1",
+  "description": "OpenCode plugin that automatically switches to a fallback model when rate limits are hit",
+  "type": "module",
+  "main": "index.ts",
+  "author": "HyeokjaeLee",
+  "files": [
+    "index.ts",
+    "src"
+  ],
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
+  "keywords": [
+    "opencode",
+    "fallback",
+    "model",
+    "rate-limit",
+    "plugin"
+  ],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/HyeokjaeLee/opencode-fallback.git"
+  },
+  "peerDependencies": {
+    "@opencode-ai/plugin": ">=1.0.0"
+  },
+  "devDependencies": {
+    "@opencode-ai/plugin": "^1.0.0",
+    "@types/node": "^22.0.0",
+    "typescript": "^5.0.0",
+    "vitest": "^4.1.5"
+  }
+}
