@@ -68,6 +68,31 @@ opencode starts → check npm registry → newer version? → bun/npm update →
 
 If the auto-update fails for any reason, a toast notification appears with the manual update command.
 
+### Large Context Fallback
+
+When an agent's context window fills up mid-task, automatically switch to a larger model to finish the work without interruption. After the task completes and the large model compacts, switch back to the original model with the compacted context.
+
+```jsonc
+{
+  "largeContextFallback": {
+    "agents": ["sisyphus", "explore"],
+    "model": "openai/gpt-5.5"
+  }
+}
+```
+
+| Field | Description |
+|-------|-------------|
+| `agents` | List of agent names to apply this behavior to |
+| `model` | Model to switch to when context fills up |
+
+**Flow:**
+```
+original model working → context full → switch to large model
+    → large model finishes task → idle → large model compacts
+    → switch back to original model (compacted context)
+```
+
 #### Fallback Model Entry
 
 Each entry in a fallback chain can be a simple string or an object:
