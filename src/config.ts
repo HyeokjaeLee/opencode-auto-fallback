@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import type {
@@ -39,6 +39,8 @@ const DEFAULT_CONFIG: FallbackConfig = {
 
 const CONFIG_FILENAME = "fallback.json";
 const SEARCH_SUBDIRS = ["config", "plugins", "plugin"];
+const SCHEMA_URL =
+  "https://raw.githubusercontent.com/HyeokjaeLee/opencode-auto-fallback/main/src/fallback.schema.json";
 
 function getConfigDir(): string {
   if (process.platform === "win32") {
@@ -121,11 +123,36 @@ function normalizeAgentMap(
   return result;
 }
 
+function writeDefaultConfig(configDir: string): string | null {
+  try {
+    mkdirSync(configDir, { recursive: true })
+    const configPath = join(configDir, CONFIG_FILENAME)
+    const content = JSON.stringify(
+      {
+        $schema: SCHEMA_URL,
+        enabled: DEFAULT_CONFIG.enabled,
+        defaultFallback: DEFAULT_CONFIG.defaultFallback,
+        agentFallbacks: DEFAULT_CONFIG.agentFallbacks,
+        cooldownMs: DEFAULT_CONFIG.cooldownMs,
+        maxRetries: DEFAULT_CONFIG.maxRetries,
+        logging: DEFAULT_CONFIG.logging,
+      },
+      null,
+      2,
+    )
+    writeFileSync(configPath, content + "\n", "utf-8")
+    return configPath
+  } catch {
+    return null
+  }
+}
+
 export function loadConfig(): FallbackConfig {
   const configPath = findConfigFile();
 
   if (!configPath) {
-    return DEFAULT_CONFIG;
+    writeDefaultConfig(getConfigDir())
+    return DEFAULT_CONFIG
   }
 
   try {
