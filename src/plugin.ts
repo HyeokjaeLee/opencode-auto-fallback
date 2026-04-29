@@ -312,11 +312,18 @@ export async function createPlugin(context: PluginInput): Promise<Hooks> {
       if (!agent || !lcf.agents.includes(agent)) return
 
       if (currentModel?.providerID === original.providerID && currentModel?.modelID === original.modelID) {
+        const parsed = parseModel(lcf.model)
+        if (isModelInCooldown(parsed.providerID, parsed.modelID)) {
+          await logger.info("Compacting: large context model in cooldown, falling through to default", {
+            sessionID: input.sessionID, largeModel: lcf.model,
+          })
+          return
+        }
+
         await logger.info("Compacting: switching to large context model", {
           sessionID: input.sessionID, agent, largeModel: lcf.model,
         })
         await abortSession(input.sessionID, context)
-        const parsed = parseModel(lcf.model)
         await revertAndPrompt(
           input.sessionID, agent, extracted.parts, extracted.info.id,
           { providerID: parsed.providerID, modelID: parsed.modelID },
