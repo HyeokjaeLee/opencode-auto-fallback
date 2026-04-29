@@ -51,7 +51,7 @@
     "maxRetries": {
       "type": "number",
       "description": "Maximum retry attempts with exponential backoff before switching to fallback chain",
-      "default": 3,
+      "default": 2,
       "minimum": 0
     },
     "logging": {

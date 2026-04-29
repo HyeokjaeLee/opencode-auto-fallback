@@ -35,7 +35,7 @@ const DEFAULT_CONFIG: FallbackConfig = {
   defaultFallback: ["openai/gpt-5.4"],
   agentFallbacks: {},
   cooldownMs: 60_000,
-  maxRetries: 3,
+  maxRetries: 2,
   logging: false,
 };
 

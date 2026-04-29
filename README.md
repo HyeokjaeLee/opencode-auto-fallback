@@ -35,8 +35,8 @@ On first run, a default config is auto-created at `~/.config/opencode/fallback.j
   "defaultFallback": ["anthropic/claude-opus-4-5"],
   "agentFallbacks": {
     "oracle": [
-      "openai/gpt-5.5",
-      { "model": "zai-coding-plan/glm-5.1", "variant": "high" }
+      "zai-coding-plan/glm-5.1",
+      { "model": "openai/gpt-5.5", "temperature": 0.5, "reasoningEffort": "medium" }
     ]
   },
   "cooldownMs": 60000,
@@ -51,7 +51,7 @@ On first run, a default config is auto-created at `~/.config/opencode/fallback.j
 | `defaultFallback` | `["openai/gpt-5.4"]` | Fallback model chain when agent has no specific override                 |
 | `agentFallbacks`  | `{}`                 | Per-agent fallback chains (`"agentName": ["model", ...]`)                |
 | `cooldownMs`      | `60000`              | Cooldown after immediate fallback (prevents rapid re-triggering)         |
-| `maxRetries`      | `3`                  | Backoff retry attempts before switching to fallback chain                |
+| `maxRetries`      | `2`                  | Backoff retry attempts before switching to fallback chain                |
 | `logging`         | `false`              | Enable file-based logging to `~/.local/share/opencode/logs/fallback.log` |
 
 #### Fallback Model Entry
