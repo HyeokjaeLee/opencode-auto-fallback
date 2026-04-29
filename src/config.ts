@@ -28,6 +28,7 @@ interface RawConfig {
   cooldownMs?: number;
   maxRetries?: number;
   logging?: boolean;
+  largeContextFallback?: { agents: string[]; model: string };
 }
 
 const DEFAULT_CONFIG: FallbackConfig = {
@@ -177,6 +178,7 @@ export function loadConfig(): FallbackConfig {
       cooldownMs: userConfig.cooldownMs ?? DEFAULT_CONFIG.cooldownMs,
       maxRetries: userConfig.maxRetries ?? DEFAULT_CONFIG.maxRetries,
       logging: userConfig.logging ?? DEFAULT_CONFIG.logging,
+      largeContextFallback: userConfig.largeContextFallback,
     };
   } catch {
     return DEFAULT_CONFIG;

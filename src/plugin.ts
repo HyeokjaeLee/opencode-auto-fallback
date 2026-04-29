@@ -1,6 +1,6 @@
 import type { Hooks, PluginInput } from "@opencode-ai/plugin"
 import type { FallbackConfig, FallbackModel } from "./types"
-import { getFallbackChain, loadConfig } from "./config"
+import { getFallbackChain, loadConfig, parseModel } from "./config"
 import { classifyError } from "./decision"
 import { BACKOFF_BASE_MS } from "./constants"
 import { createLogger } from "./log"
@@ -18,6 +18,7 @@ import { version as currentVersion } from "../package.json"
 import { extractUserParts } from "./message"
 
 const activeFallbackParams = new Map<string, FallbackModel>()
+const largeContextSessions = new Map<string, { providerID: string; modelID: string }>()
 
 function setActiveFallbackParams(sessionID: string, model: FallbackModel): void {
   activeFallbackParams.set(sessionID, model)
@@ -276,6 +277,13 @@ export async function createPlugin(context: PluginInput): Promise<Hooks> {
       }
     },
     "chat.params": async (input, output) => {
+      if (input.model && !largeContextSessions.has(input.sessionID)) {
+        largeContextSessions.set(input.sessionID, {
+          providerID: input.model.providerID,
+          modelID: input.model.id,
+        })
+      }
+
       const fallback = getAndClearFallbackParams(input.sessionID)
       if (!fallback) return
       if (fallback.temperature !== undefined) output.temperature = fallback.temperature
@@ -290,7 +298,67 @@ export async function createPlugin(context: PluginInput): Promise<Hooks> {
         output.options.thinking = fallback.thinking
       }
     },
+    "experimental.session.compacting": async (input, output) => {
+      const lcf = config.largeContextFallback
+      if (!lcf) return
+
+      const original = largeContextSessions.get(input.sessionID)
+      if (!original) return
+
+      const { extracted, currentModel } = await fetchSessionData(input.sessionID, context)
+      if (!extracted) return
+
+      const agent = extracted.info.agent
+      if (!agent || !lcf.agents.includes(agent)) return
+
+      if (currentModel?.providerID === original.providerID && currentModel?.modelID === original.modelID) {
+        await logger.info("Compacting: switching to large context model", {
+          sessionID: input.sessionID, agent, largeModel: lcf.model,
+        })
+        await abortSession(input.sessionID, context)
+        const parsed = parseModel(lcf.model)
+        await revertAndPrompt(
+          input.sessionID, agent, extracted.parts, extracted.info.id,
+          { providerID: parsed.providerID, modelID: parsed.modelID },
+          logger, context,
+        )
+        await showToastSafely(context, {
+          title: "Large Context Model",
+          message: `Switched to ${lcf.model} for large context`,
+          variant: "info",
+          duration: 5000,
+        }, logger)
+      }
+    },
     event: async ({ event }) => {
+      if (event.type === "session.compacted") {
+        const props = event.properties as { sessionID: string }
+        const lcf = config.largeContextFallback
+        if (!lcf) return
+
+        const original = largeContextSessions.get(props.sessionID)
+        if (!original) return
+
+        const { extracted } = await fetchSessionData(props.sessionID, context)
+        if (!extracted) return
+
+        if (!extracted.info.agent || !lcf.agents.includes(extracted.info.agent)) return
+
+        await logger.info("Compacted: switching back to original model", {
+          sessionID: props.sessionID, original,
+        })
+        await abortSession(props.sessionID, context)
+        await revertAndPrompt(
+          props.sessionID, extracted.info.agent, extracted.parts, extracted.info.id,
+          original, logger, context,
+        )
+        await showToastSafely(context, {
+          title: "Original Model Restored",
+          message: `Switched back to ${original.providerID}/${original.modelID}`,
+          variant: "info",
+          duration: 5000,
+        }, logger)
+      }
       if (event.type === "session.status") {
         const props = event.properties as { sessionID: string; status: { type: string } }
         if (props.status.type === "idle" && resetIfExpired(props.sessionID)) {
@@ -302,6 +370,7 @@ export async function createPlugin(context: PluginInput): Promise<Hooks> {
         const props = event.properties as { info?: { id?: string } }
         if (props.info?.id) {
           removeSession(props.info.id)
+          largeContextSessions.delete(props.info.id)
           await logger.info("Session cleaned up", { sessionID: props.info.id })
         }
       }

@@ -49,6 +49,10 @@ export interface FallbackConfig {
   cooldownMs: number
   maxRetries: number
   logging: boolean
+  largeContextFallback?: {
+    agents: string[]
+    model: string
+  }
 }
 
 export interface SessionState {
