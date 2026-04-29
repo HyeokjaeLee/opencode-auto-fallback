@@ -52,7 +52,7 @@ On first run, a default config is auto-created at `~/.config/opencode/fallback.j
 | Field             | Default              | Description                                                              |
 | ----------------- | -------------------- | ------------------------------------------------------------------------ |
 | `enabled`         | `true`               | Enable/disable the plugin                                                |
-| `defaultFallback` | `["openai/gpt-5.5"]` | Fallback model chain when agent has no specific override                 |
+| `defaultFallback` | _(none)_             | Fallback model chain when agent has no specific override. **Optional** — when omitted, only agents listed in `agentFallbacks` will trigger fallback |
 | `agentFallbacks`  | `{}`                 | Per-agent fallback chains (`"agentName": ["model", ...]`)                |
 | `cooldownMs`      | `60000`              | Cooldown after immediate fallback (prevents rapid re-triggering)         |
 | `maxRetries`      | `2`                  | Backoff retry attempts before switching to fallback chain                |
@@ -88,10 +88,12 @@ When an agent's context window fills up mid-task, automatically switch to a larg
 
 **Flow:**
 ```
-original model working → context full → switch to large model
+original model working → context full (auto compact) → switch to large model
     → large model finishes task → idle → large model compacts
     → switch back to original model (compacted context)
 ```
+
+> **Note:** Manual `/compact` commands do **not** trigger large context fallback — only automatic compaction (when context fills up from an assistant response) activates it.
 
 #### Fallback Model Entry
 
@@ -161,7 +163,7 @@ bun install
 # Type check
 tsc --noEmit
 
-# Run tests (64 tests)
+# Run tests (67 tests)
 bun vitest run
 
 # Bump version (CI auto-publishes)
