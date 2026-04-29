@@ -161,6 +161,10 @@ async function handleRetry(
   }, logger)
   const chain = getFallbackChain(config, extracted.info.agent)
   await logger.info(`Retries exhausted (${backoffLevel}), starting fallback chain`, { sessionID })
+  if (chain.length === 0) {
+    await logger.info("No fallback chain configured for this agent, skipping", { sessionID, agent: extracted.info.agent })
+    return
+  }
   await tryFallbackChain(sessionID, chain, extracted.info.agent, extracted.parts, extracted.info.id, logger, context)
 }
 
@@ -189,6 +193,10 @@ async function handleImmediate(
   await abortSession(sessionID, context)
   const chain = getFallbackChain(config, extracted.info.agent)
   await logger.info(`Immediate fallback chain (${chain.length} models)`, { sessionID })
+  if (chain.length === 0) {
+    await logger.info("No fallback chain configured for this agent, skipping", { sessionID, agent: extracted.info.agent })
+    return
+  }
   await tryFallbackChain(sessionID, chain, extracted.info.agent, extracted.parts, extracted.info.id, logger, context)
 }
 

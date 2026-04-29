@@ -45,6 +45,14 @@ describe("getFallbackChain", () => {
     { providerID: "zai-coding-plan", modelID: "glm-5.1", variant: "high" },
   ]))
   it("falls back to default", () => expect(getFallbackChain(config, "unknown")).toEqual([{ providerID: "anthropic", modelID: "claude-opus-4-5" }]))
+  it("returns empty when no default and agent not registered", () => {
+    const noDefault: FallbackConfig = { ...config, defaultFallback: undefined }
+    expect(getFallbackChain(noDefault, "unknown")).toEqual([])
+  })
+  it("still works for registered agent when no default", () => {
+    const noDefault: FallbackConfig = { ...config, defaultFallback: undefined }
+    expect(getFallbackChain(noDefault, "build")).toEqual([{ providerID: "anthropic", modelID: "claude-sonnet-4" }])
+  })
   it("preserves new FallbackModel fields", () => {
     const configWithParams: FallbackConfig = {
       ...config,

@@ -11,7 +11,7 @@
       "default": true
     },
     "defaultFallback": {
-      "description": "Default fallback model chain (used when agent has no specific fallback)",
+      "description": "Default fallback model chain. When omitted, only agents explicitly listed in agentFallbacks will trigger fallback.",
       "oneOf": [
         {
           "type": "array",

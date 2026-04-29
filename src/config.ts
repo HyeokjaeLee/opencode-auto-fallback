@@ -33,7 +33,6 @@ interface RawConfig {
 
 const DEFAULT_CONFIG: FallbackConfig = {
   enabled: true,
-  defaultFallback: ["openai/gpt-5.4"],
   agentFallbacks: {},
   cooldownMs: 60_000,
   maxRetries: 2,
@@ -189,13 +188,15 @@ export function getFallbackChain(
   config: FallbackConfig,
   agent: string | undefined,
 ): FallbackModel[] {
-  const chain = agent && config.agentFallbacks[agent]
+  const raw = agent && config.agentFallbacks[agent]
     ? config.agentFallbacks[agent]
     : config.defaultFallback
 
+  if (!raw) return []
+
   const models: FallbackModel[] = []
 
-  for (const entry of chain) {
+  for (const entry of raw) {
     if (typeof entry === "string") {
       const parsed = parseModel(entry)
       models.push({ providerID: parsed.providerID, modelID: parsed.modelID })

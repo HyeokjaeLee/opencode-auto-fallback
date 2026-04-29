@@ -44,7 +44,7 @@ export interface FallbackDecision {
 
 export interface FallbackConfig {
   enabled: boolean
-  defaultFallback: FallbackEntry[]
+  defaultFallback?: FallbackEntry[]
   agentFallbacks: AgentFallbackMap
   cooldownMs: number
   maxRetries: number
