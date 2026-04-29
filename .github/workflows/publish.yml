@@ -24,8 +24,8 @@ jobs:
           VERSION=$(node -p "require('./package.json').version")
           echo "version=v${VERSION}" >> $GITHUB_OUTPUT
       - run: |
-          gh release create v${{ steps.version.outputs.version }} \
-            --title "v${{ steps.version.outputs.version }}" \
+          gh release create ${{ steps.version.outputs.version }} \
+            --title "${{ steps.version.outputs.version }}" \
             --generate-notes
         env:
           GH_TOKEN: ${{ github.token }}
