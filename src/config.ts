@@ -82,14 +82,20 @@ export function parseModel(model: ModelReference): ResolvedModel {
   };
 }
 
-function normalizeFallbackEntry(
-  entry: string | FallbackEntry,
-): FallbackModel {
+function normalizeFallbackEntry(entry: string | FallbackEntry): FallbackModel {
   if (typeof entry === "string") {
-    const parsed = parseModel(entry);
-    return { providerID: parsed.providerID, modelID: parsed.modelID };
+    const parsed = parseModel(entry)
+    return { providerID: parsed.providerID, modelID: parsed.modelID }
   }
-  return entry;
+  const { providerID, modelID, variant, reasoningEffort, temperature, topP, maxTokens, thinking } = entry
+  const result: FallbackModel = { providerID, modelID }
+  if (variant !== undefined) result.variant = variant
+  if (reasoningEffort !== undefined) result.reasoningEffort = reasoningEffort
+  if (temperature !== undefined) result.temperature = temperature
+  if (topP !== undefined) result.topP = topP
+  if (maxTokens !== undefined) result.maxTokens = maxTokens
+  if (thinking !== undefined) result.thinking = thinking
+  return result
 }
 
 function normalizeChain(

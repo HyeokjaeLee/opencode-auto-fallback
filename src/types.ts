@@ -5,6 +5,14 @@ export interface ResolvedModel {
 
 export interface FallbackModel extends ResolvedModel {
   variant?: string
+  reasoningEffort?: "none" | "minimal" | "low" | "medium" | "high" | "xhigh"
+  temperature?: number
+  topP?: number
+  maxTokens?: number
+  thinking?: {
+    type: "enabled" | "disabled"
+    budgetTokens?: number
+  }
 }
 
 export type ModelReference = string | ResolvedModel
@@ -12,6 +20,14 @@ export type ModelReference = string | ResolvedModel
 export type FallbackEntry = string | FallbackModel
 
 export type AgentFallbackMap = Record<string, FallbackEntry[]>
+
+export type ErrorClass = "immediate" | "retry" | "ignore"
+
+export interface FallbackDecision {
+  action: ErrorClass
+  httpStatus?: number
+  matchedPattern?: string
+}
 
 export interface FallbackConfig {
   enabled: boolean

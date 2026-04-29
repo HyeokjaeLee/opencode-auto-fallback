@@ -1,6 +1,5 @@
 import { describe, it, expect, afterEach } from "vitest"
 import { parseModel, getFallbackChain } from "../config"
-import { isImmediateFallback } from "../matcher"
 import { classifyError } from "../decision"
 import {
   isCooldownActive,
@@ -11,20 +10,14 @@ import {
   resetIfExpired,
   removeSession,
 } from "../session-state"
-import {
-  markModelBroken,
-  isModelBroken,
-  clearBrokenModels,
-} from "../provider-state"
+import { markModelCooldown, isModelInCooldown, clearAllCooldowns } from "../provider-state"
 import type { FallbackConfig } from "../types"
 
 describe("parseModel", () => {
   it("parses 'provider/model'", () => {
     expect(parseModel("anthropic/claude-sonnet-4")).toEqual({ providerID: "anthropic", modelID: "claude-sonnet-4" })
   })
-  it("no slash → providerID = modelID", () => {
-    expect(parseModel("mymodel")).toEqual({ providerID: "mymodel", modelID: "mymodel" })
-  })
+  it("no slash", () => expect(parseModel("mymodel")).toEqual({ providerID: "mymodel", modelID: "mymodel" }))
   it("passes through object", () => {
     const obj = { providerID: "google", modelID: "gemini-2.5-flash" }
     expect(parseModel(obj)).toBe(obj)
@@ -52,47 +45,74 @@ describe("getFallbackChain", () => {
     { providerID: "zai-coding-plan", modelID: "glm-5.1", variant: "high" },
   ]))
   it("falls back to default", () => expect(getFallbackChain(config, "unknown")).toEqual([{ providerID: "anthropic", modelID: "claude-opus-4-5" }]))
-})
-
-describe("isImmediateFallback", () => {
-  it("exceeded your", () => expect(isImmediateFallback("You exceeded your current quota")).toBe(true))
-  it("quota exceeded", () => expect(isImmediateFallback("Error: quota exceeded")).toBe(true))
-  it("exhausted", () => expect(isImmediateFallback("credits exhausted")).toBe(true))
-  it("authentication", () => expect(isImmediateFallback("Authentication failed")).toBe(true))
-  it("unauthorized", () => expect(isImmediateFallback("401 Unauthorized")).toBe(true))
-  it("invalid api key", () => expect(isImmediateFallback("Invalid API key provided")).toBe(true))
-  it("model not found", () => expect(isImmediateFallback("model not found in this region")).toBe(true))
-  it("not immediate (rate limit)", () => expect(isImmediateFallback("rate limit reached")).toBe(false))
-  it("not immediate (unknown)", () => expect(isImmediateFallback("internal server error")).toBe(false))
+  it("preserves new FallbackModel fields", () => {
+    const configWithParams: FallbackConfig = {
+      ...config,
+      agentFallbacks: {
+        oracle: [{
+          providerID: "anthropic",
+          modelID: "claude-sonnet-4",
+          reasoningEffort: "high",
+          temperature: 0.5,
+          topP: 0.9,
+          maxTokens: 8192,
+          thinking: { type: "enabled", budgetTokens: 4096 },
+        }],
+      },
+    }
+    const chain = getFallbackChain(configWithParams, "oracle")
+    expect(chain[0]).toEqual({
+      providerID: "anthropic",
+      modelID: "claude-sonnet-4",
+      reasoningEffort: "high",
+      temperature: 0.5,
+      topP: 0.9,
+      maxTokens: 8192,
+      thinking: { type: "enabled", budgetTokens: 4096 },
+    })
+  })
 })
 
 describe("classifyError", () => {
-  it("immediate → immediate", () => expect(classifyError("quota exceeded", false)).toEqual({ action: "immediate" }))
-  it("unknown → retry (default)", () => expect(classifyError("internal error", false)).toEqual({ action: "retry" }))
-  it("rate limit → retry", () => expect(classifyError("rate limit reached", false)).toEqual({ action: "retry" }))
-  it("timeout → retry", () => expect(classifyError("request timed out", false)).toEqual({ action: "retry" }))
-  it("cooldown → ignore", () => expect(classifyError("anything", true)).toEqual({ action: "ignore" }))
+  it("immediate via pattern", () => {
+    expect(classifyError("quota exceeded", false)).toEqual(expect.objectContaining({ action: "immediate" }))
+  })
+  it("retry via pattern", () => {
+    expect(classifyError("rate limit reached", false)).toEqual(expect.objectContaining({ action: "retry" }))
+  })
+  it("retry as default", () => {
+    expect(classifyError("something broke", false)).toEqual({ action: "retry" })
+  })
+  it("ignore when cooldown active", () => {
+    expect(classifyError("quota exceeded", true)).toEqual({ action: "ignore" })
+  })
+  it("HTTP 429 → retry", () => {
+    expect(classifyError("429 Too Many Requests", false)).toEqual(expect.objectContaining({ action: "retry", httpStatus: 429 }))
+  })
+  it("HTTP 401 → immediate", () => {
+    expect(classifyError("HTTP 401 Unauthorized", false)).toEqual(expect.objectContaining({ action: "immediate", httpStatus: 401 }))
+  })
 })
 
-describe("provider-state (per-model)", () => {
-  afterEach(() => clearBrokenModels())
+describe("provider-state (timed cooldown)", () => {
+  afterEach(() => clearAllCooldowns())
 
-  it("starts empty", () => {
-    expect(isModelBroken("openai", "gpt-5.5")).toBe(false)
-    expect(isModelBroken("openai", "gpt-5.4")).toBe(false)
+  it("starts as not in cooldown", () => {
+    expect(isModelInCooldown("openai", "gpt-5.5")).toBe(false)
   })
-  it("marks and checks specific model", () => {
-    markModelBroken("openai", "gpt-5.5")
-    expect(isModelBroken("openai", "gpt-5.5")).toBe(true)
-    expect(isModelBroken("openai", "gpt-5.4")).toBe(false)
-    expect(isModelBroken("zai-coding-plan", "glm-5.1")).toBe(false)
+  it("marks and checks cooldown", () => {
+    markModelCooldown("openai", "gpt-5.5", 60_000)
+    expect(isModelInCooldown("openai", "gpt-5.5")).toBe(true)
+    expect(isModelInCooldown("openai", "gpt-5.4")).toBe(false)
   })
-  it("clearBrokenModels clears all", () => {
-    markModelBroken("openai", "gpt-5.5")
-    markModelBroken("zai-coding-plan", "glm-5.1")
-    clearBrokenModels()
-    expect(isModelBroken("openai", "gpt-5.5")).toBe(false)
-    expect(isModelBroken("zai-coding-plan", "glm-5.1")).toBe(false)
+  it("auto-expires", () => {
+    markModelCooldown("openai", "gpt-5.5", -1)
+    expect(isModelInCooldown("openai", "gpt-5.5")).toBe(false)
+  })
+  it("clearAllCooldowns resets", () => {
+    markModelCooldown("openai", "gpt-5.5", 60_000)
+    clearAllCooldowns()
+    expect(isModelInCooldown("openai", "gpt-5.5")).toBe(false)
   })
 })
 
