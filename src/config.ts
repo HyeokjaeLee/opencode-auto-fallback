@@ -42,7 +42,7 @@ const DEFAULT_CONFIG: FallbackConfig = {
 const CONFIG_FILENAME = "fallback.json";
 const SEARCH_SUBDIRS = ["config", "plugins", "plugin"];
 const SCHEMA_URL =
-  "https://raw.githubusercontent.com/HyeokjaeLee/opencode-auto-fallback/main/src/fallback.schema.json";
+  "https://raw.githubusercontent.com/HyeokjaeLee/opencode-auto-fallback/main/docs/fallback.schema.json";
 
 function getConfigDir(): string {
   if (process.platform === "win32") {

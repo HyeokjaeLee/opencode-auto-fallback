@@ -30,14 +30,18 @@ On first run, a default config is auto-created at `~/.config/opencode/fallback.j
 
 ```jsonc
 {
-  "$schema": "https://raw.githubusercontent.com/HyeokjaeLee/opencode-auto-fallback/main/src/fallback.schema.json",
+  "$schema": "https://raw.githubusercontent.com/HyeokjaeLee/opencode-auto-fallback/main/docs/fallback.schema.json",
   "enabled": true,
-  "defaultFallback": ["anthropic/claude-opus-4-5"],
+  "defaultFallback": ["anthropic/claude-opus-4-7"],
   "agentFallbacks": {
-    "oracle": [
+    "reviewer": [
       "zai-coding-plan/glm-5.1",
-      { "model": "openai/gpt-5.5", "temperature": 0.5, "reasoningEffort": "medium" }
-    ]
+      {
+        "model": "openai/gpt-5.5",
+        "temperature": 0.5,
+        "reasoningEffort": "medium",
+      },
+    ],
   },
   "cooldownMs": 60000,
   "maxRetries": 3,
@@ -48,7 +52,7 @@ On first run, a default config is auto-created at `~/.config/opencode/fallback.j
 | Field             | Default              | Description                                                              |
 | ----------------- | -------------------- | ------------------------------------------------------------------------ |
 | `enabled`         | `true`               | Enable/disable the plugin                                                |
-| `defaultFallback` | `["openai/gpt-5.4"]` | Fallback model chain when agent has no specific override                 |
+| `defaultFallback` | `["openai/gpt-5.5"]` | Fallback model chain when agent has no specific override                 |
 | `agentFallbacks`  | `{}`                 | Per-agent fallback chains (`"agentName": ["model", ...]`)                |
 | `cooldownMs`      | `60000`              | Cooldown after immediate fallback (prevents rapid re-triggering)         |
 | `maxRetries`      | `2`                  | Backoff retry attempts before switching to fallback chain                |
@@ -60,11 +64,11 @@ Each entry in a fallback chain can be a simple string or an object:
 
 ```jsonc
 // Simple
-"openai/gpt-5.4"
+"openai/gpt-5.5"
 
 // With options
 {
-  "model": "openai/gpt-5.4",
+  "model": "openai/gpt-5.5",
   "variant": "high",
   "temperature": 0.5,
   "reasoningEffort": "medium",
@@ -117,7 +121,3 @@ bun vitest run
 npm version patch --no-git-tag-version
 git push
 ```
-
-## License
-
-MIT
