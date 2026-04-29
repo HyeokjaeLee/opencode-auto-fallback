@@ -13,7 +13,7 @@ import {
   resetBackoff,
 } from "./session-state"
 import { markModelCooldown, isModelInCooldown, cleanupExpired } from "./provider-state"
-import { checkForUpdates } from "./update-checker"
+import { checkForUpdates, tryInstallUpdate } from "./update-checker"
 import { version as currentVersion } from "../package.json"
 import { extractUserParts } from "./message"
 
@@ -221,12 +221,31 @@ export async function createPlugin(context: PluginInput): Promise<Hooks> {
   }
 
   checkForUpdates(currentVersion).then(async (info) => {
-    if (info.hasUpdate) {
-      await logger.info(`Update available: ${info.current} → ${info.latest}`)
+    if (!info.hasUpdate) return
+
+    await logger.info(`Update available: ${info.current} → ${info.latest}`)
+    await showToastSafely(context, {
+      title: "Updating Plugin",
+      message: `opencode-auto-fallback ${info.current} → ${info.latest}`,
+      variant: "info",
+      duration: 5000,
+    }, logger)
+
+    const ok = await tryInstallUpdate()
+    if (ok) {
+      await logger.info(`Updated to ${info.latest}`)
       await showToastSafely(context, {
-        title: "Plugin Update Available",
-        message: `opencode-auto-fallback ${info.latest} available (current: ${info.current})`,
-        variant: "info",
+        title: "Plugin Updated",
+        message: `opencode-auto-fallback updated to ${info.latest}`,
+        variant: "success",
+        duration: 5000,
+      }, logger)
+    } else {
+      await logger.warn("Auto-update failed")
+      await showToastSafely(context, {
+        title: "Update Failed",
+        message: `Could not auto-update. Run manually: bun update opencode-auto-fallback`,
+        variant: "warning",
         duration: 8000,
       }, logger)
     }
