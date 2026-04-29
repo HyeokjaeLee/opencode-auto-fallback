@@ -58,6 +58,16 @@ On first run, a default config is auto-created at `~/.config/opencode/fallback.j
 | `maxRetries`      | `2`                  | Backoff retry attempts before switching to fallback chain                |
 | `logging`         | `false`              | Enable file-based logging to `~/.local/share/opencode/logs/fallback.log` |
 
+### Auto Updates
+
+The plugin checks for updates on every startup and installs them automatically — no manual intervention needed.
+
+```
+opencode starts → check npm registry → newer version? → bun/npm update → done
+```
+
+If the auto-update fails for any reason, a toast notification appears with the manual update command.
+
 #### Fallback Model Entry
 
 Each entry in a fallback chain can be a simple string or an object:
@@ -107,19 +117,14 @@ The plugin tries each model in the chain sequentially. Models in cooldown are au
 
 ### Compatibility with Other Fallback Plugins
 
-If another plugin with model fallback logic is installed alongside this one, **enable only one** to avoid conflicts. Both plugins will intercept the same error events via `chat.message` — the one loaded last in `opencode.json` takes precedence.
-
-This plugin uses an aggressive abort + revert + re-prompt approach that resets the session state. Any pending fallback actions from other plugins are discarded. To use this plugin exclusively, disable fallback features in other plugins' configurations.
+If another plugin with model fallback logic is installed alongside this one, place **`opencode-auto-fallback` first** in the plugin array. The first plugin in the list processes the model response first — by placing this plugin first, it intercepts the error before other fallback plugins see it.
 
 ```jsonc
-// ❌ Conflict — multiple fallback plugins active
+// ✅ opencode-auto-fallback handles errors first
+"plugin": ["opencode-auto-fallback", "other-fallback-plugin"]
+
+// ❌ Other plugin may interfere
 "plugin": ["other-fallback-plugin", "opencode-auto-fallback"]
-
-// ✅ Disable this plugin
-{ "enabled": false }
-
-// ✅ Disable the other plugin's fallback feature
-// Check its documentation for the relevant config option
 ```
 
 ## Development
