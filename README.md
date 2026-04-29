@@ -44,7 +44,7 @@ On first run, a default config is auto-created at `~/.config/opencode/fallback.j
     ],
   },
   "cooldownMs": 60000,
-  "maxRetries": 3,
+  "maxRetries": 2,
   "logging": false,
 }
 ```
@@ -104,6 +104,23 @@ Immediate fallback errors (quota, auth) skip retries entirely and go straight to
 ### Fallback Chain
 
 The plugin tries each model in the chain sequentially. Models in cooldown are automatically skipped. If all models are exhausted, the error is logged and a critical toast is shown.
+
+### Compatibility with Other Fallback Plugins
+
+If another plugin with model fallback logic is installed alongside this one, **enable only one** to avoid conflicts. Both plugins will intercept the same error events via `chat.message` — the one loaded last in `opencode.json` takes precedence.
+
+This plugin uses an aggressive abort + revert + re-prompt approach that resets the session state. Any pending fallback actions from other plugins are discarded. To use this plugin exclusively, disable fallback features in other plugins' configurations.
+
+```jsonc
+// ❌ Conflict — multiple fallback plugins active
+"plugin": ["other-fallback-plugin", "opencode-auto-fallback"]
+
+// ✅ Disable this plugin
+{ "enabled": false }
+
+// ✅ Disable the other plugin's fallback feature
+// Check its documentation for the relevant config option
+```
 
 ## Development
 
