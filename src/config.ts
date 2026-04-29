@@ -3,36 +3,37 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import type {
   FallbackConfig,
+  FallbackEntry,
+  FallbackModel,
   ModelReference,
   ResolvedModel,
   AgentFallbackMap,
 } from "./types";
 
-export type { FallbackConfig, ModelReference, ResolvedModel, AgentFallbackMap };
+export type {
+  FallbackConfig,
+  FallbackEntry,
+  FallbackModel,
+  ModelReference,
+  ResolvedModel,
+  AgentFallbackMap,
+};
 
 interface RawConfig {
   enabled?: boolean;
-  defaultFallback?: ModelReference;
-  agentFallbacks?: AgentFallbackMap;
+  defaultFallback?: ModelReference | FallbackEntry[];
+  agentFallbacks?: Record<string, ModelReference | FallbackEntry[]>;
   cooldownMs?: number;
-  patterns?: string[];
+  rateLimitRetries?: number;
   logging?: boolean;
 }
 
-const DEFAULT_PATTERNS = [
-  "rate limit",
-  "usage limit",
-  "too many requests",
-  "quota exceeded",
-  "overloaded",
-];
-
 const DEFAULT_CONFIG: FallbackConfig = {
   enabled: true,
-  defaultFallback: "openai/gpt-5.4",
+  defaultFallback: ["openai/gpt-5.4"],
   agentFallbacks: {},
   cooldownMs: 60_000,
-  patterns: DEFAULT_PATTERNS,
+  rateLimitRetries: 3,
   logging: false,
 };
 
@@ -81,6 +82,39 @@ export function parseModel(model: ModelReference): ResolvedModel {
   };
 }
 
+function normalizeFallbackEntry(
+  entry: string | FallbackEntry,
+): FallbackModel {
+  if (typeof entry === "string") {
+    const parsed = parseModel(entry);
+    return { providerID: parsed.providerID, modelID: parsed.modelID };
+  }
+  return entry;
+}
+
+function normalizeChain(
+  raw: ModelReference | FallbackEntry[] | undefined,
+): FallbackEntry[] {
+  if (raw === undefined) return [];
+  if (Array.isArray(raw)) return raw;
+  return [typeof raw === "string" ? raw : raw];
+}
+
+function normalizeAgentMap(
+  raw: Record<string, ModelReference | FallbackEntry[]> | undefined,
+): AgentFallbackMap {
+  if (!raw) return {};
+  const result: AgentFallbackMap = {};
+  for (const [agent, value] of Object.entries(raw)) {
+    if (Array.isArray(value)) {
+      result[agent] = value;
+    } else {
+      result[agent] = [typeof value === "string" ? value : value];
+    }
+  }
+  return result;
+}
+
 export function loadConfig(): FallbackConfig {
   const configPath = findConfigFile();
 
@@ -95,11 +129,10 @@ export function loadConfig(): FallbackConfig {
     return {
       enabled: userConfig.enabled ?? DEFAULT_CONFIG.enabled,
       defaultFallback:
-        userConfig.defaultFallback ?? DEFAULT_CONFIG.defaultFallback,
-      agentFallbacks:
-        userConfig.agentFallbacks ?? DEFAULT_CONFIG.agentFallbacks,
+        normalizeChain(userConfig.defaultFallback) ?? DEFAULT_CONFIG.defaultFallback,
+      agentFallbacks: normalizeAgentMap(userConfig.agentFallbacks),
       cooldownMs: userConfig.cooldownMs ?? DEFAULT_CONFIG.cooldownMs,
-      patterns: userConfig.patterns ?? DEFAULT_CONFIG.patterns,
+      rateLimitRetries: userConfig.rateLimitRetries ?? DEFAULT_CONFIG.rateLimitRetries,
       logging: userConfig.logging ?? DEFAULT_CONFIG.logging,
     };
   } catch {
@@ -107,12 +140,24 @@ export function loadConfig(): FallbackConfig {
   }
 }
 
-export function getFallbackForAgent(
+export function getFallbackChain(
   config: FallbackConfig,
   agent: string | undefined,
-): ResolvedModel {
-  if (agent && config.agentFallbacks[agent]) {
-    return parseModel(config.agentFallbacks[agent]);
+): FallbackModel[] {
+  const chain = agent && config.agentFallbacks[agent]
+    ? config.agentFallbacks[agent]
+    : config.defaultFallback
+
+  const models: FallbackModel[] = []
+
+  for (const entry of chain) {
+    if (typeof entry === "string") {
+      const parsed = parseModel(entry)
+      models.push({ providerID: parsed.providerID, modelID: parsed.modelID })
+    } else {
+      models.push(entry)
+    }
   }
-  return parseModel(config.defaultFallback);
+
+  return models
 }

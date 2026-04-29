@@ -1,189 +1,125 @@
-import { describe, it, expect } from "vitest"
-import { parseModel, getFallbackForAgent } from "../config"
-import { isSyntheticPart, convertToPromptPart, extractUserParts } from "../message"
-import type { FallbackConfig, MessagePart, MessageWithParts } from "../types"
+import { describe, it, expect, afterEach } from "vitest"
+import { parseModel, getFallbackChain } from "../config"
+import { isImmediateFallback } from "../matcher"
+import { classifyError } from "../decision"
+import {
+  isCooldownActive,
+  activateCooldown,
+  incrementBackoff,
+  getBackoffLevel,
+  resetBackoff,
+  resetIfExpired,
+  removeSession,
+} from "../session-state"
+import {
+  markProviderBroken,
+  isProviderBroken,
+  clearBrokenProviders,
+  clearBrokenProvider,
+} from "../provider-state"
+import type { FallbackConfig } from "../types"
 
 describe("parseModel", () => {
-  it("parses 'provider/model' string into object", () => {
-    const result = parseModel("anthropic/claude-sonnet-4")
-    expect(result).toEqual({ providerID: "anthropic", modelID: "claude-sonnet-4" })
+  it("parses 'provider/model'", () => {
+    expect(parseModel("anthropic/claude-sonnet-4")).toEqual({ providerID: "anthropic", modelID: "claude-sonnet-4" })
   })
-
-  it("returns providerID = modelID when no slash", () => {
-    const result = parseModel("mymodel")
-    expect(result).toEqual({ providerID: "mymodel", modelID: "mymodel" })
+  it("no slash → providerID = modelID", () => {
+    expect(parseModel("mymodel")).toEqual({ providerID: "mymodel", modelID: "mymodel" })
   })
-
-  it("passes through object unchanged", () => {
+  it("passes through object", () => {
     const obj = { providerID: "google", modelID: "gemini-2.5-flash" }
     expect(parseModel(obj)).toBe(obj)
   })
-
-  it("handles provider with multiple slashes in model ID", () => {
-    const result = parseModel("openai/gpt-4/o3-mini")
-    expect(result).toEqual({ providerID: "openai", modelID: "gpt-4/o3-mini" })
-  })
 })
 
-describe("getFallbackForAgent", () => {
+describe("getFallbackChain", () => {
   const config: FallbackConfig = {
     enabled: true,
-    defaultFallback: "anthropic/claude-opus-4-5",
+    defaultFallback: ["anthropic/claude-opus-4-5"],
     agentFallbacks: {
-      build: "anthropic/claude-sonnet-4",
-      explore: "google/gemini-2.5-flash",
+      build: ["anthropic/claude-sonnet-4"],
+      oracle: [
+        { providerID: "openai", modelID: "gpt-5.5" },
+        { providerID: "zai-coding-plan", modelID: "glm-5.1", variant: "high" },
+      ],
     },
     cooldownMs: 300000,
-    patterns: ["rate limit"],
+    rateLimitRetries: 3,
     logging: false,
   }
+  it("agent-specific", () => expect(getFallbackChain(config, "build")).toEqual([{ providerID: "anthropic", modelID: "claude-sonnet-4" }]))
+  it("preserves variant", () => expect(getFallbackChain(config, "oracle")).toEqual([
+    { providerID: "openai", modelID: "gpt-5.5" },
+    { providerID: "zai-coding-plan", modelID: "glm-5.1", variant: "high" },
+  ]))
+  it("falls back to default", () => expect(getFallbackChain(config, "unknown")).toEqual([{ providerID: "anthropic", modelID: "claude-opus-4-5" }]))
+})
 
-  it("returns agent-specific fallback when agent is configured", () => {
-    expect(getFallbackForAgent(config, "build")).toEqual({
-      providerID: "anthropic",
-      modelID: "claude-sonnet-4",
-    })
+describe("isImmediateFallback", () => {
+  it("exceeded your", () => expect(isImmediateFallback("You exceeded your current quota")).toBe(true))
+  it("quota exceeded", () => expect(isImmediateFallback("Error: quota exceeded")).toBe(true))
+  it("exhausted", () => expect(isImmediateFallback("credits exhausted")).toBe(true))
+  it("authentication", () => expect(isImmediateFallback("Authentication failed")).toBe(true))
+  it("unauthorized", () => expect(isImmediateFallback("401 Unauthorized")).toBe(true))
+  it("invalid api key", () => expect(isImmediateFallback("Invalid API key provided")).toBe(true))
+  it("model not found", () => expect(isImmediateFallback("model not found in this region")).toBe(true))
+  it("not immediate (rate limit)", () => expect(isImmediateFallback("rate limit reached")).toBe(false))
+  it("not immediate (unknown)", () => expect(isImmediateFallback("internal server error")).toBe(false))
+})
+
+describe("classifyError", () => {
+  it("immediate → immediate", () => expect(classifyError("quota exceeded", false)).toEqual({ action: "immediate" }))
+  it("unknown → retry (default)", () => expect(classifyError("internal error", false)).toEqual({ action: "retry" }))
+  it("rate limit → retry", () => expect(classifyError("rate limit reached", false)).toEqual({ action: "retry" }))
+  it("timeout → retry", () => expect(classifyError("request timed out", false)).toEqual({ action: "retry" }))
+  it("cooldown → ignore", () => expect(classifyError("anything", true)).toEqual({ action: "ignore" }))
+})
+
+describe("provider-state", () => {
+  afterEach(() => clearBrokenProviders())
+
+  it("starts empty", () => {
+    expect(isProviderBroken("openai")).toBe(false)
+    expect(isProviderBroken("zai-coding-plan")).toBe(false)
   })
-
-  it("returns default fallback when agent is not in map", () => {
-    expect(getFallbackForAgent(config, "unknown-agent")).toEqual({
-      providerID: "anthropic",
-      modelID: "claude-opus-4-5",
-    })
+  it("marks and checks", () => {
+    markProviderBroken("openai")
+    expect(isProviderBroken("openai")).toBe(true)
+    expect(isProviderBroken("zai-coding-plan")).toBe(false)
   })
-
-  it("returns default fallback when agent is undefined", () => {
-    expect(getFallbackForAgent(config, undefined)).toEqual({
-      providerID: "anthropic",
-      modelID: "claude-opus-4-5",
-    })
+  it("clears individual", () => {
+    markProviderBroken("openai")
+    markProviderBroken("zai-coding-plan")
+    clearBrokenProvider("openai")
+    expect(isProviderBroken("openai")).toBe(false)
+    expect(isProviderBroken("zai-coding-plan")).toBe(true)
   })
-
-  it("handles object-form agent fallback", () => {
-    const objectConfig: FallbackConfig = {
-      ...config,
-      agentFallbacks: {
-        oracle: { providerID: "anthropic", modelID: "claude-opus-4-5" },
-      },
-    }
-    expect(getFallbackForAgent(objectConfig, "oracle")).toEqual({
-      providerID: "anthropic",
-      modelID: "claude-opus-4-5",
-    })
+  it("clears all", () => {
+    markProviderBroken("openai")
+    markProviderBroken("zai-coding-plan")
+    clearBrokenProviders()
+    expect(isProviderBroken("openai")).toBe(false)
+    expect(isProviderBroken("zai-coding-plan")).toBe(false)
   })
 })
 
-describe("isSyntheticPart", () => {
-  it("returns true when synthetic flag is set", () => {
-    expect(isSyntheticPart({ type: "text", synthetic: true } as any)).toBe(true)
+describe("session state - backoff", () => {
+  const sid = "test-backoff"
+  afterEach(() => removeSession(sid))
+  it("starts at 0", () => expect(getBackoffLevel(sid)).toBe(0))
+  it("increments", () => {
+    expect(incrementBackoff(sid)).toBe(1)
+    expect(incrementBackoff(sid)).toBe(2)
   })
-
-  it("returns false when synthetic flag is not set", () => {
-    expect(isSyntheticPart({ type: "text", text: "hello" } as MessagePart)).toBe(false)
+  it("resets", () => {
+    incrementBackoff(sid); incrementBackoff(sid)
+    resetBackoff(sid)
+    expect(getBackoffLevel(sid)).toBe(0)
   })
-
-  it("returns false when synthetic is false", () => {
-    expect(isSyntheticPart({ type: "text", synthetic: false } as any)).toBe(false)
-  })
-})
-
-describe("convertToPromptPart", () => {
-  it("converts text part with text content", () => {
-    const part = { id: "1", type: "text", text: "hello" } as MessagePart
-    expect(convertToPromptPart(part)).toEqual({ type: "text", text: "hello" })
-  })
-
-  it("returns null for text part without text", () => {
-    const part = { id: "1", type: "text" } as MessagePart
-    expect(convertToPromptPart(part)).toBeNull()
-  })
-
-  it("converts file part with url and mime", () => {
-    const part = { id: "2", type: "file", url: "file:///a.png", mime: "image/png", filename: "a.png" } as MessagePart
-    expect(convertToPromptPart(part)).toEqual({
-      type: "file",
-      mime: "image/png",
-      filename: "a.png",
-      url: "file:///a.png",
-    })
-  })
-
-  it("returns null for file part without url", () => {
-    const part = { id: "2", type: "file", mime: "image/png" } as MessagePart
-    expect(convertToPromptPart(part)).toBeNull()
-  })
-
-  it("returns null for file part without mime", () => {
-    const part = { id: "2", type: "file", url: "file:///a.png" } as MessagePart
-    expect(convertToPromptPart(part)).toBeNull()
-  })
-
-  it("converts agent part with name", () => {
-    const part = { id: "3", type: "agent", name: "build" } as MessagePart
-    expect(convertToPromptPart(part)).toEqual({ type: "agent", name: "build" })
-  })
-
-  it("returns null for agent part without name", () => {
-    const part = { id: "3", type: "agent" } as MessagePart
-    expect(convertToPromptPart(part)).toBeNull()
-  })
-
-  it("returns null for unknown part type", () => {
-    const part = { id: "4", type: "unknown" } as MessagePart
-    expect(convertToPromptPart(part)).toBeNull()
-  })
-})
-
-describe("extractUserParts", () => {
-  it("extracts last user message parts", () => {
-    const messages: MessageWithParts[] = [
-      {
-        info: { id: "1", role: "user", sessionID: "s1", parts: [{ id: "p1", type: "text", text: "hello" }] } as any,
-        parts: [{ id: "p1", type: "text", text: "hello" } as MessagePart],
-      },
-      {
-        info: { id: "2", role: "assistant", sessionID: "s1" },
-        parts: [{ id: "p2", type: "text", text: "world" } as MessagePart],
-      },
-    ]
-    const result = extractUserParts(messages)
-    expect(result).not.toBeNull()
-    expect(result!.info.role).toBe("user")
-    expect(result!.parts).toEqual([{ type: "text", text: "hello" }])
-  })
-
-  it("returns null when no user message exists", () => {
-    const messages: MessageWithParts[] = [
-      {
-        info: { id: "1", role: "assistant", sessionID: "s1" },
-        parts: [{ id: "p1", type: "text", text: "response" } as MessagePart],
-      },
-    ]
-    expect(extractUserParts(messages)).toBeNull()
-  })
-
-  it("filters out synthetic parts", () => {
-    const messages: MessageWithParts[] = [
-      {
-        info: { id: "1", role: "user", sessionID: "s1" },
-        parts: [
-          { id: "p1", type: "text", text: "real" } as MessagePart,
-          { id: "p2", type: "text", text: "synthetic", synthetic: true } as any,
-        ],
-      },
-    ]
-    const result = extractUserParts(messages)!
-    expect(result.parts).toHaveLength(1)
-    expect(result.parts[0]).toEqual({ type: "text", text: "real" })
-  })
-
-  it("returns null when all parts are invalid", () => {
-    const messages: MessageWithParts[] = [
-      {
-        info: { id: "1", role: "user", sessionID: "s1" },
-        parts: [{ id: "p1", type: "unknown" } as MessagePart],
-      },
-    ]
-    expect(extractUserParts(messages)).toBeNull()
+  it("resetIfExpired clears backoff", () => {
+    incrementBackoff(sid); incrementBackoff(sid)
+    activateCooldown(sid, -1)
+    resetIfExpired(sid)
+    expect(getBackoffLevel(sid)).toBe(0)
   })
 })

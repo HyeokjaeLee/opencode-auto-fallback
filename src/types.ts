@@ -3,22 +3,29 @@ export interface ResolvedModel {
   modelID: string
 }
 
+export interface FallbackModel extends ResolvedModel {
+  variant?: string
+}
+
 export type ModelReference = string | ResolvedModel
 
-export type AgentFallbackMap = Record<string, ModelReference>
+export type FallbackEntry = string | FallbackModel
+
+export type AgentFallbackMap = Record<string, FallbackEntry[]>
 
 export interface FallbackConfig {
   enabled: boolean
-  defaultFallback: ModelReference
+  defaultFallback: FallbackEntry[]
   agentFallbacks: AgentFallbackMap
   cooldownMs: number
-  patterns: string[]
+  rateLimitRetries: number
   logging: boolean
 }
 
 export interface SessionState {
   fallbackActive: boolean
   cooldownEndTime: number
+  backoffLevel: number
 }
 
 export interface MessageInfo {
