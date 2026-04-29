@@ -71,6 +71,21 @@ describe("getFallbackChain", () => {
       thinking: { type: "enabled", budgetTokens: 4096 },
     })
   })
+  it("parses { model: 'provider/model' } shorthand", () => {
+    const configShort: FallbackConfig = {
+      ...config,
+      agentFallbacks: {
+        build: [{ model: "openai/gpt-5.5", variant: "high", temperature: 0.7 }],
+      },
+    }
+    const chain = getFallbackChain(configShort, "build")
+    expect(chain[0]).toEqual({
+      providerID: "openai",
+      modelID: "gpt-5.5",
+      variant: "high",
+      temperature: 0.7,
+    })
+  })
 })
 
 describe("classifyError", () => {
