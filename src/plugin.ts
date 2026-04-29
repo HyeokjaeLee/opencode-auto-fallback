@@ -275,3 +275,11 @@ export async function createPlugin(context: PluginInput): Promise<Hooks> {
     },
   }
 }
+
+export const _forTesting = {
+  handleRetry,
+  handleImmediate,
+  tryFallbackChain,
+  showToastSafely,
+  revertAndPrompt,
+}
