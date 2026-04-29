@@ -56,7 +56,7 @@ On first run, a default config is auto-created at `~/.config/opencode/fallback.j
 | `agentFallbacks`  | `{}`                 | Per-agent fallback chains (`"agentName": ["model", ...]`)                |
 | `cooldownMs`      | `60000`              | Cooldown after immediate fallback (prevents rapid re-triggering)         |
 | `maxRetries`      | `2`                  | Backoff retry attempts before switching to fallback chain                |
-| `logging`         | `false`              | Enable file-based logging to `~/.local/share/opencode/logs/fallback.log` |
+| `logging`         | `false`              | Enable file-based logging to `~/.config/opencode/fallback.log` |
 
 ### Auto Updates
 
