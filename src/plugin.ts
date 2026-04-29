@@ -13,6 +13,8 @@ import {
   resetBackoff,
 } from "./session-state"
 import { markModelCooldown, isModelInCooldown, cleanupExpired } from "./provider-state"
+import { checkForUpdates } from "./update-checker"
+import { version as currentVersion } from "../package.json"
 import { extractUserParts } from "./message"
 
 const activeFallbackParams = new Map<string, FallbackModel>()
@@ -217,6 +219,18 @@ export async function createPlugin(context: PluginInput): Promise<Hooks> {
     await logger.info("Plugin disabled via config")
     return {}
   }
+
+  checkForUpdates(currentVersion).then(async (info) => {
+    if (info.hasUpdate) {
+      await logger.info(`Update available: ${info.current} → ${info.latest}`)
+      await showToastSafely(context, {
+        title: "Plugin Update Available",
+        message: `opencode-auto-fallback ${info.latest} available (current: ${info.current})`,
+        variant: "info",
+        duration: 8000,
+      }, logger)
+    }
+  }).catch(() => {})
 
   return {
     "chat.message": async (input, output) => {
