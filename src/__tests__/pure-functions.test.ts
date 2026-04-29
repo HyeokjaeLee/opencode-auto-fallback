@@ -12,10 +12,9 @@ import {
   removeSession,
 } from "../session-state"
 import {
-  markProviderBroken,
-  isProviderBroken,
-  clearBrokenProviders,
-  clearBrokenProvider,
+  markModelBroken,
+  isModelBroken,
+  clearBrokenModels,
 } from "../provider-state"
 import type { FallbackConfig } from "../types"
 
@@ -44,7 +43,7 @@ describe("getFallbackChain", () => {
       ],
     },
     cooldownMs: 300000,
-    rateLimitRetries: 3,
+    maxRetries: 3,
     logging: false,
   }
   it("agent-specific", () => expect(getFallbackChain(config, "build")).toEqual([{ providerID: "anthropic", modelID: "claude-sonnet-4" }]))
@@ -75,31 +74,25 @@ describe("classifyError", () => {
   it("cooldown → ignore", () => expect(classifyError("anything", true)).toEqual({ action: "ignore" }))
 })
 
-describe("provider-state", () => {
-  afterEach(() => clearBrokenProviders())
+describe("provider-state (per-model)", () => {
+  afterEach(() => clearBrokenModels())
 
   it("starts empty", () => {
-    expect(isProviderBroken("openai")).toBe(false)
-    expect(isProviderBroken("zai-coding-plan")).toBe(false)
+    expect(isModelBroken("openai", "gpt-5.5")).toBe(false)
+    expect(isModelBroken("openai", "gpt-5.4")).toBe(false)
   })
-  it("marks and checks", () => {
-    markProviderBroken("openai")
-    expect(isProviderBroken("openai")).toBe(true)
-    expect(isProviderBroken("zai-coding-plan")).toBe(false)
+  it("marks and checks specific model", () => {
+    markModelBroken("openai", "gpt-5.5")
+    expect(isModelBroken("openai", "gpt-5.5")).toBe(true)
+    expect(isModelBroken("openai", "gpt-5.4")).toBe(false)
+    expect(isModelBroken("zai-coding-plan", "glm-5.1")).toBe(false)
   })
-  it("clears individual", () => {
-    markProviderBroken("openai")
-    markProviderBroken("zai-coding-plan")
-    clearBrokenProvider("openai")
-    expect(isProviderBroken("openai")).toBe(false)
-    expect(isProviderBroken("zai-coding-plan")).toBe(true)
-  })
-  it("clears all", () => {
-    markProviderBroken("openai")
-    markProviderBroken("zai-coding-plan")
-    clearBrokenProviders()
-    expect(isProviderBroken("openai")).toBe(false)
-    expect(isProviderBroken("zai-coding-plan")).toBe(false)
+  it("clearBrokenModels clears all", () => {
+    markModelBroken("openai", "gpt-5.5")
+    markModelBroken("zai-coding-plan", "glm-5.1")
+    clearBrokenModels()
+    expect(isModelBroken("openai", "gpt-5.5")).toBe(false)
+    expect(isModelBroken("zai-coding-plan", "glm-5.1")).toBe(false)
   })
 })
 

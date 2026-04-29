@@ -1,7 +1,6 @@
 import type { Hooks, PluginInput } from "@opencode-ai/plugin"
 import type { FallbackConfig, FallbackModel } from "./types"
 import { getFallbackChain, loadConfig } from "./config"
-import { classifyError } from "./decision"
 import { BACKOFF_BASE_MS } from "./constants"
 import { createLogger } from "./log"
 import {
@@ -12,18 +11,9 @@ import {
   incrementBackoff,
   resetBackoff,
 } from "./session-state"
-import { markProviderBroken, isProviderBroken, clearBrokenProviders } from "./provider-state"
+import { markModelBroken, isModelBroken, clearBrokenModels } from "./provider-state"
+import { isImmediateFallback } from "./matcher"
 import { extractUserParts } from "./message"
-
-interface SessionStatusProps {
-  sessionID: string
-  status: {
-    type: "idle" | "retry" | "busy"
-    attempt?: number
-    message?: string
-    next?: number
-  }
-}
 
 async function fetchSessionData(sessionID: string, context: PluginInput) {
   const messagesResponse = await context.client.session.messages({ path: { id: sessionID } })
@@ -64,11 +54,7 @@ async function revertAndPrompt(
     })
     return true
   } catch (err) {
-    await logger.warn("Prompt failed", {
-      sessionID,
-      model,
-      error: err instanceof Error ? err.message : String(err),
-    })
+    await logger.warn("Prompt failed", { sessionID, model, error: err instanceof Error ? err.message : String(err) })
     return false
   }
 }
@@ -83,18 +69,14 @@ async function tryFallbackChain(
   context: PluginInput,
 ): Promise<boolean> {
   for (let i = 0; i < chain.length; i++) {
-    if (isProviderBroken(chain[i].providerID)) {
-      await logger.info(`Skipping broken provider ${chain[i].providerID}`, {
-        sessionID,
-        model: chain[i],
-        remaining: chain.length - i - 1,
+    if (isModelBroken(chain[i].providerID, chain[i].modelID)) {
+      await logger.info(`Skipping broken model ${chain[i].providerID}/${chain[i].modelID}`, {
+        sessionID, model: chain[i], remaining: chain.length - i - 1,
       })
       continue
     }
-
     await logger.info(`Trying fallback ${i + 1}/${chain.length}`, { sessionID, model: chain[i] })
-    const ok = await revertAndPrompt(sessionID, agent, parts, messageID, chain[i], logger, context)
-    if (ok) {
+    if (await revertAndPrompt(sessionID, agent, parts, messageID, chain[i], logger, context)) {
       await logger.info("Fallback chain succeeded", { sessionID, triedCount: i + 1 })
       return true
     }
@@ -117,19 +99,16 @@ async function handleRetry(
   }
   await abortSession(sessionID, context)
 
-  if (backoffLevel <= config.rateLimitRetries) {
+  if (backoffLevel <= config.maxRetries) {
     const waitMs = BACKOFF_BASE_MS * Math.pow(2, backoffLevel - 1)
-    await logger.info(`Backoff retry ${backoffLevel}/${config.rateLimitRetries} (${waitMs}ms)`, { sessionID })
+    await logger.info(`Backoff retry ${backoffLevel}/${config.maxRetries} (${waitMs}ms)`, { sessionID })
     await new Promise(resolve => setTimeout(resolve, waitMs))
-
     const ok = await revertAndPrompt(
       sessionID, extracted.info.agent, extracted.parts, extracted.info.id,
       { providerID: currentModel.providerID, modelID: currentModel.modelID },
       logger, context,
     )
-    if (ok) {
-      await logger.info("Retry succeeded with same model", { sessionID, backoffLevel })
-    }
+    if (ok) await logger.info("Retry succeeded with same model", { sessionID, backoffLevel })
     return
   }
 
@@ -151,31 +130,26 @@ async function handleImmediate(
     await logger.error("Cannot fallback: no valid user message", { sessionID })
     return
   }
-
   if (currentModel) {
-    markProviderBroken(currentModel.providerID)
-    await logger.info(`Marked provider ${currentModel.providerID} as broken`, { sessionID })
+    markModelBroken(currentModel.providerID, currentModel.modelID)
+    await logger.info(`Marked ${currentModel.providerID}/${currentModel.modelID} as broken`, { sessionID })
   }
-
   await abortSession(sessionID, context)
   const chain = getFallbackChain(config, extracted.info.agent)
   await logger.info(`Immediate fallback chain (${chain.length} models)`, { sessionID })
   await tryFallbackChain(sessionID, chain, extracted.info.agent, extracted.parts, extracted.info.id, logger, context)
 }
 
-async function handleIdleStatus(props: SessionStatusProps, logger: ReturnType<typeof createLogger>) {
-  if (resetIfExpired(props.sessionID)) {
-    clearBrokenProviders()
-    await logger.info("Cooldown expired, backoff and provider state reset", { sessionID: props.sessionID })
+function hasErrorText(parts: any[]): string {
+  for (const part of parts) {
+    if (part.type === "text" && part.text) return part.text
   }
+  return ""
 }
 
-async function handleSessionDeleted(event: { properties: unknown }, logger: ReturnType<typeof createLogger>) {
-  const props = event.properties as { info?: { id?: string } }
-  if (props.info?.id) {
-    removeSession(props.info.id)
-    await logger.info("Session cleaned up", { sessionID: props.info.id })
-  }
+function looksLikeError(text: string): boolean {
+  const lower = text.toLowerCase()
+  return lower.includes("error") || lower.includes("failed") || lower.includes("unable")
 }
 
 export async function createPlugin(context: PluginInput): Promise<Hooks> {
@@ -186,7 +160,7 @@ export async function createPlugin(context: PluginInput): Promise<Hooks> {
     enabled: config.enabled,
     defaultFallback: config.defaultFallback,
     agentFallbacks: config.agentFallbacks,
-    rateLimitRetries: config.rateLimitRetries,
+    maxRetries: config.maxRetries,
     cooldownMs: config.cooldownMs,
   })
 
@@ -196,24 +170,34 @@ export async function createPlugin(context: PluginInput): Promise<Hooks> {
   }
 
   return {
+    "chat.message": async (input, output) => {
+      const text = hasErrorText(output.parts)
+      if (!text || !looksLikeError(text)) return
+      if (isCooldownActive(input.sessionID)) return
+
+      if (isImmediateFallback(text)) {
+        await logger.info("Immediate error in chat.message", { sessionID: input.sessionID, text: text.slice(0, 200) })
+        await handleImmediate(input.sessionID, config, logger, context)
+        return
+      }
+
+      await logger.info("Retryable error in chat.message", { sessionID: input.sessionID, text: text.slice(0, 200) })
+      await handleRetry(input.sessionID, config, logger, context)
+    },
     event: async ({ event }) => {
       if (event.type === "session.status") {
-        const props = event.properties as SessionStatusProps
-        if (props.status.type === "retry" && props.status.message) {
-          const decision = classifyError(props.status.message, isCooldownActive(props.sessionID))
-          if (decision.action === "immediate") {
-            await handleImmediate(props.sessionID, config, logger, context)
-          }
-          if (decision.action === "retry") {
-            await handleRetry(props.sessionID, config, logger, context)
-          }
-        }
-        if (props.status.type === "idle") {
-          await handleIdleStatus(props, logger)
+        const props = event.properties as { sessionID: string; status: { type: string } }
+        if (props.status.type === "idle" && resetIfExpired(props.sessionID)) {
+          clearBrokenModels()
+          await logger.info("Cooldown expired, state reset", { sessionID: props.sessionID })
         }
       }
       if (event.type === "session.deleted") {
-        await handleSessionDeleted(event, logger)
+        const props = event.properties as { info?: { id?: string } }
+        if (props.info?.id) {
+          removeSession(props.info.id)
+          await logger.info("Session cleaned up", { sessionID: props.info.id })
+        }
       }
     },
   }

@@ -24,7 +24,7 @@ interface RawConfig {
   defaultFallback?: ModelReference | FallbackEntry[];
   agentFallbacks?: Record<string, ModelReference | FallbackEntry[]>;
   cooldownMs?: number;
-  rateLimitRetries?: number;
+  maxRetries?: number;
   logging?: boolean;
 }
 
@@ -33,7 +33,7 @@ const DEFAULT_CONFIG: FallbackConfig = {
   defaultFallback: ["openai/gpt-5.4"],
   agentFallbacks: {},
   cooldownMs: 60_000,
-  rateLimitRetries: 3,
+  maxRetries: 3,
   logging: false,
 };
 
@@ -132,7 +132,7 @@ export function loadConfig(): FallbackConfig {
         normalizeChain(userConfig.defaultFallback) ?? DEFAULT_CONFIG.defaultFallback,
       agentFallbacks: normalizeAgentMap(userConfig.agentFallbacks),
       cooldownMs: userConfig.cooldownMs ?? DEFAULT_CONFIG.cooldownMs,
-      rateLimitRetries: userConfig.rateLimitRetries ?? DEFAULT_CONFIG.rateLimitRetries,
+      maxRetries: userConfig.maxRetries ?? DEFAULT_CONFIG.maxRetries,
       logging: userConfig.logging ?? DEFAULT_CONFIG.logging,
     };
   } catch {

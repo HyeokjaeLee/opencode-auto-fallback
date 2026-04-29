@@ -1,17 +1,17 @@
-const brokenProviders = new Set<string>()
+const brokenModels = new Set<string>()
 
-export function markProviderBroken(providerID: string): void {
-  brokenProviders.add(providerID)
+function modelKey(providerID: string, modelID: string): string {
+  return `${providerID}/${modelID}`
 }
 
-export function isProviderBroken(providerID: string): boolean {
-  return brokenProviders.has(providerID)
+export function markModelBroken(providerID: string, modelID: string): void {
+  brokenModels.add(modelKey(providerID, modelID))
 }
 
-export function clearBrokenProviders(): void {
-  brokenProviders.clear()
+export function isModelBroken(providerID: string, modelID: string): boolean {
+  return brokenModels.has(modelKey(providerID, modelID))
 }
 
-export function clearBrokenProvider(providerID: string): void {
-  brokenProviders.delete(providerID)
+export function clearBrokenModels(): void {
+  brokenModels.clear()
 }

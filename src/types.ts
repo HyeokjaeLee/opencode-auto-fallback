@@ -18,7 +18,7 @@ export interface FallbackConfig {
   defaultFallback: FallbackEntry[]
   agentFallbacks: AgentFallbackMap
   cooldownMs: number
-  rateLimitRetries: number
+  maxRetries: number
   logging: boolean
 }
 
