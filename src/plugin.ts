@@ -305,8 +305,11 @@ export async function createPlugin(context: PluginInput): Promise<Hooks> {
       const original = largeContextSessions.get(input.sessionID)
       if (!original) return
 
-      const { extracted, currentModel } = await fetchSessionData(input.sessionID, context)
+      const { extracted, currentModel, messages } = await fetchSessionData(input.sessionID, context)
       if (!extracted) return
+
+      const lastRole = messages?.[messages.length - 1]?.info?.role
+      if (lastRole === "user") return
 
       const agent = extracted.info.agent
       if (!agent || !lcf.agents.includes(agent)) return
