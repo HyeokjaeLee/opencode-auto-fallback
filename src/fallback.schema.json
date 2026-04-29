@@ -70,15 +70,11 @@
         {
           "type": "object",
           "description": "Fallback model with optional parameters",
-          "required": ["providerID", "modelID"],
+          "required": ["model"],
           "properties": {
-            "providerID": {
+            "model": {
               "type": "string",
-              "description": "Provider ID (e.g. 'openai', 'anthropic', 'zai-coding-plan')"
-            },
-            "modelID": {
-              "type": "string",
-              "description": "Model ID (e.g. 'gpt-5.4', 'claude-sonnet-4')"
+              "description": "Model reference (e.g. 'openai/gpt-5.4', 'anthropic/claude-sonnet-4')"
             },
             "variant": {
               "type": "string",

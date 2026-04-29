@@ -5,6 +5,7 @@ import type {
   FallbackConfig,
   FallbackEntry,
   FallbackModel,
+  FallbackModelConfig,
   ModelReference,
   ResolvedModel,
   AgentFallbackMap,
@@ -14,6 +15,7 @@ export type {
   FallbackConfig,
   FallbackEntry,
   FallbackModel,
+  FallbackModelConfig,
   ModelReference,
   ResolvedModel,
   AgentFallbackMap,
@@ -89,15 +91,23 @@ function normalizeFallbackEntry(entry: string | FallbackEntry): FallbackModel {
     const parsed = parseModel(entry)
     return { providerID: parsed.providerID, modelID: parsed.modelID }
   }
-  const { providerID, modelID, variant, reasoningEffort, temperature, topP, maxTokens, thinking } = entry
-  const result: FallbackModel = { providerID, modelID }
-  if (variant !== undefined) result.variant = variant
-  if (reasoningEffort !== undefined) result.reasoningEffort = reasoningEffort
-  if (temperature !== undefined) result.temperature = temperature
-  if (topP !== undefined) result.topP = topP
-  if (maxTokens !== undefined) result.maxTokens = maxTokens
-  if (thinking !== undefined) result.thinking = thinking
-  return result
+  return entryToFallbackModel(entry)
+}
+
+function entryToFallbackModel(entry: FallbackModel | FallbackModelConfig): FallbackModel {
+  if ("model" in entry) {
+    const parsed = parseModel(entry.model)
+    const { model: _m, variant, reasoningEffort, temperature, topP, maxTokens, thinking } = entry
+    const result: FallbackModel = { providerID: parsed.providerID, modelID: parsed.modelID }
+    if (variant !== undefined) result.variant = variant
+    if (reasoningEffort !== undefined) result.reasoningEffort = reasoningEffort
+    if (temperature !== undefined) result.temperature = temperature
+    if (topP !== undefined) result.topP = topP
+    if (maxTokens !== undefined) result.maxTokens = maxTokens
+    if (thinking !== undefined) result.thinking = thinking
+    return result
+  }
+  return entry
 }
 
 function normalizeChain(
@@ -187,6 +197,8 @@ export function getFallbackChain(
     if (typeof entry === "string") {
       const parsed = parseModel(entry)
       models.push({ providerID: parsed.providerID, modelID: parsed.modelID })
+    } else if ("model" in entry) {
+      models.push(entryToFallbackModel(entry))
     } else {
       models.push(entry)
     }

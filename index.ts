@@ -3,6 +3,7 @@ export { createPlugin as AutoFallbackPlugin } from "./src/plugin"
 export type {
   FallbackConfig,
   FallbackModel,
+  FallbackModelConfig,
   FallbackEntry,
   ModelReference,
   ResolvedModel,

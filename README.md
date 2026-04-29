@@ -13,24 +13,18 @@ OpenCode plugin that automatically detects model errors and switches to a fallba
 
 ## Installation
 
-### 1. Install the plugin
-
-```bash
-npm install opencode-auto-fallback
-```
-
-### 2. Register in opencode config
+### 1. Register in opencode config
 
 Add `"opencode-auto-fallback"` to the `plugin` array in `~/.config/opencode/opencode.json`:
 
 ```jsonc
 {
   "$schema": "https://opencode.ai/config.json",
-  "plugin": ["opencode-auto-fallback"]
+  "plugin": ["opencode-auto-fallback"],
 }
 ```
 
-### 3. Configuration (optional)
+### 2. Configuration (optional)
 
 On first run, a default config is auto-created at `~/.config/opencode/fallback.json`. You can customize it:
 
@@ -38,27 +32,27 @@ On first run, a default config is auto-created at `~/.config/opencode/fallback.j
 {
   "$schema": "https://raw.githubusercontent.com/HyeokjaeLee/opencode-auto-fallback/main/src/fallback.schema.json",
   "enabled": true,
-  "defaultFallback": ["openai/gpt-5.4"],
+  "defaultFallback": ["anthropic/claude-opus-4-5"],
   "agentFallbacks": {
     "oracle": [
       "openai/gpt-5.5",
-      { "providerID": "zai-coding-plan", "modelID": "glm-5.1", "variant": "high" }
+      { "model": "zai-coding-plan/glm-5.1", "variant": "high" }
     ]
   },
   "cooldownMs": 60000,
   "maxRetries": 3,
-  "logging": false
+  "logging": false,
 }
 ```
 
-| Field | Default | Description |
-|-------|---------|-------------|
-| `enabled` | `true` | Enable/disable the plugin |
-| `defaultFallback` | `["openai/gpt-5.4"]` | Fallback model chain when agent has no specific override |
-| `agentFallbacks` | `{}` | Per-agent fallback chains (`"agentName": ["model", ...]`) |
-| `cooldownMs` | `60000` | Cooldown after immediate fallback (prevents rapid re-triggering) |
-| `maxRetries` | `3` | Backoff retry attempts before switching to fallback chain |
-| `logging` | `false` | Enable file-based logging to `~/.local/share/opencode/logs/fallback.log` |
+| Field             | Default              | Description                                                              |
+| ----------------- | -------------------- | ------------------------------------------------------------------------ |
+| `enabled`         | `true`               | Enable/disable the plugin                                                |
+| `defaultFallback` | `["openai/gpt-5.4"]` | Fallback model chain when agent has no specific override                 |
+| `agentFallbacks`  | `{}`                 | Per-agent fallback chains (`"agentName": ["model", ...]`)                |
+| `cooldownMs`      | `60000`              | Cooldown after immediate fallback (prevents rapid re-triggering)         |
+| `maxRetries`      | `3`                  | Backoff retry attempts before switching to fallback chain                |
+| `logging`         | `false`              | Enable file-based logging to `~/.local/share/opencode/logs/fallback.log` |
 
 #### Fallback Model Entry
 
@@ -70,8 +64,7 @@ Each entry in a fallback chain can be a simple string or an object:
 
 // With options
 {
-  "providerID": "openai",
-  "modelID": "gpt-5.4",
+  "model": "openai/gpt-5.4",
   "variant": "high",
   "temperature": 0.5,
   "reasoningEffort": "medium",
@@ -83,15 +76,15 @@ Each entry in a fallback chain can be a simple string or an object:
 
 ### Error Classification
 
-| Error type | Action |
-|---|---|
-| **HTTP 401/403** (auth) | Immediate fallback |
-| **Quota exceeded, billing** | Immediate fallback |
-| **Model not found** | Immediate fallback |
-| **HTTP 429** (rate limit) | Backoff retry (2s → 4s → 8s…) then fallback |
-| **HTTP 5xx** | Backoff retry then fallback |
-| **Overloaded, unavailable** | Backoff retry then fallback |
-| **Unknown errors** | Backoff retry then fallback *(safety net)* |
+| Error type                  | Action                                      |
+| --------------------------- | ------------------------------------------- |
+| **HTTP 401/403** (auth)     | Immediate fallback                          |
+| **Quota exceeded, billing** | Immediate fallback                          |
+| **Model not found**         | Immediate fallback                          |
+| **HTTP 429** (rate limit)   | Backoff retry (2s → 4s → 8s…) then fallback |
+| **HTTP 5xx**                | Backoff retry then fallback                 |
+| **Overloaded, unavailable** | Backoff retry then fallback                 |
+| **Unknown errors**          | Backoff retry then fallback _(safety net)_  |
 
 ### Retry Flow
 
