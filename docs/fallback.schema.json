@@ -72,6 +72,17 @@
         "model": {
           "type": "string",
           "description": "Model to switch to when context fills up (e.g. 'openai/gpt-5.5')"
+        },
+        "contextWindows": {
+          "type": "object",
+          "description": "Maps 'provider/model' to context window token limit (e.g. 'openai/gpt-5.5': 2097152). Used to skip large context fallback when window sizes are too similar.",
+          "additionalProperties": { "type": "number", "minimum": 1 }
+        },
+        "minContextRatio": {
+          "type": "number",
+          "description": "Minimum fractional increase in context window required to trigger fallback. Default 0.1 = 10%. When current model and large model have context windows within this ratio, normal compact proceeds instead.",
+          "default": 0.1,
+          "minimum": 0
         }
       },
       "required": ["agents", "model"],

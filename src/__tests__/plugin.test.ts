@@ -5,7 +5,7 @@ import { clearAllCooldowns, isModelInCooldown } from "../provider-state"
 import { removeSession } from "../session-state"
 import { createMockContext, createMockMessages } from "./mocks"
 
-const { handleRetry, handleImmediate, tryFallbackChain, showToastSafely, revertAndPrompt, isLargeContextAgent } = _forTesting
+const { handleRetry, handleImmediate, tryFallbackChain, showToastSafely, revertAndPrompt, isLargeContextAgent, shouldSkipLargeContextFallback } = _forTesting
 
 function makeConfig(overrides?: Partial<FallbackConfig>): FallbackConfig {
   return {
@@ -358,5 +358,28 @@ describe("revertAndPrompt", () => {
         }),
       }),
     )
+  })
+})
+
+describe("shouldSkipLargeContextFallback", () => {
+  it("returns false when ratio exceeds 1 + minContextRatio (large enough difference)", () => {
+    expect(shouldSkipLargeContextFallback(100, 210, 0.1)).toBe(false)
+  })
+
+  it("returns true when ratio is below 1 + minContextRatio (difference < 10%)", () => {
+    expect(shouldSkipLargeContextFallback(1000, 1050, 0.1)).toBe(true)
+  })
+
+  it("returns true when ratio equals exactly 1 + minContextRatio (difference == 10%)", () => {
+    expect(shouldSkipLargeContextFallback(10000, 11000, 0.1)).toBe(true)
+  })
+
+  it("returns true for identical context windows (0% difference)", () => {
+    expect(shouldSkipLargeContextFallback(128000, 128000, 0.1)).toBe(true)
+  })
+
+  it("respects custom minContextRatio", () => {
+    // 100% difference (ratio = 2), but require 200% (minContextRatio = 2)
+    expect(shouldSkipLargeContextFallback(100, 200, 2)).toBe(true)
   })
 })

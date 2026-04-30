@@ -10,6 +10,7 @@ export type {
   AgentFallbackMap,
   FallbackDecision,
   ErrorClass,
+  LargeContextFallbackConfig,
 } from "./src/types"
 
 import { createPlugin } from "./src/plugin"

@@ -82,11 +82,47 @@ const largeContextSessions = new Map<string, { providerID: string; modelID: stri
 const currentModelSessions = new Map<string, { providerID: string; modelID: string }>()
 const sessionCooldownModel = new Map<string, { providerID: string; modelID: string }>()
 const largeContextPhase = new Map<string, LargeContextPhase>()
+const modelContextLimits = new Map<string, number>()
+
+const BUILTIN_CONTEXT_WINDOWS: Record<string, number> = {
+  "opencode-go/deepseek-v4-flash": 131072,
+  "opencode-go/deepseek-v4-pro": 262144,
+  "anthropic/claude-sonnet-4": 200000,
+  "anthropic/claude-opus-4": 200000,
+  "anthropic/claude-haiku-3.5": 200000,
+  "openai/gpt-4o": 128000,
+  "openai/gpt-4o-mini": 128000,
+  "openai/gpt-5.5": 2097152,
+  "openai/o3": 200000,
+  "google/gemini-2.5-flash": 1048576,
+  "google/gemini-2.5-pro": 1048576,
+  "zai-coding-plan/glm-5.1": 131072,
+  "deepseek/deepseek-chat": 131072,
+  "deepseek/deepseek-reasoner": 131072,
+}
+
+function contextWindowFor(
+  model: { providerID: string; modelID: string },
+  contextWindows?: Record<string, number>,
+): number | undefined {
+  const key = `${model.providerID}/${model.modelID}`
+  if (modelContextLimits.has(key)) return modelContextLimits.get(key)!
+  if (contextWindows?.[key] !== undefined) return contextWindows[key]
+  return BUILTIN_CONTEXT_WINDOWS[key]
+}
 
 function isLargeContextAgent(agent: string | undefined, agents: string[]): boolean {
   if (!agent) return false
   const normalizedAgent = normalizeAgentName(agent)
   return agents.some(configuredAgent => normalizeAgentName(configuredAgent) === normalizedAgent)
+}
+
+function shouldSkipLargeContextFallback(
+  currentWindow: number,
+  largeWindow: number,
+  minContextRatio: number,
+): boolean {
+  return largeWindow / currentWindow <= 1 + minContextRatio
 }
 
 function setActiveFallbackParams(sessionID: string, model: FallbackModel): void {
@@ -377,6 +413,19 @@ export async function createPlugin(context: PluginInput): Promise<Hooks> {
             model: `${input.model.providerID}/${input.model.id}`,
           })
         }
+
+        const ctxLimit = (input.model as { limit?: { context?: number } }).limit?.context
+        if (ctxLimit !== undefined) {
+          const modelKey = `${input.model.providerID}/${input.model.id}`
+          modelContextLimits.set(modelKey, ctxLimit)
+          if (changed) {
+            await logger.info("Detected model context limit", {
+              sessionID: input.sessionID,
+              model: modelKey,
+              contextLimit: ctxLimit,
+            })
+          }
+        }
       }
 
       const fallback = getAndClearFallbackParams(input.sessionID)
@@ -457,27 +506,58 @@ export async function createPlugin(context: PluginInput): Promise<Hooks> {
         return
       }
 
-      await logger.info("Compacting: switching to large context model (no compact)", {
+      const effectiveCurrent = currentModel ?? original
+      const currentWindow = contextWindowFor(effectiveCurrent, lcf.contextWindows)
+      const largeWindow = contextWindowFor(parsed, lcf.contextWindows)
+      if (currentWindow !== undefined && largeWindow !== undefined &&
+        shouldSkipLargeContextFallback(currentWindow, largeWindow, lcf.minContextRatio ?? 0.1)
+      ) {
+        await logger.info("Compacting: context window difference too small, skipping large context fallback", {
+          sessionID: input.sessionID,
+          currentModel: `${effectiveCurrent.providerID}/${effectiveCurrent.modelID}`,
+          largeModel: lcf.model,
+          currentWindow,
+          largeWindow,
+        })
+        return
+      }
+
+      await logger.info("Compacting: switching to large context model, continuing without revert", {
         sessionID: input.sessionID, agent, largeModel: lcf.model,
         fromModel: currentModel ? `${currentModel.providerID}/${currentModel.modelID}` : "unknown",
       })
       await abortSession(input.sessionID, context)
       largeContextPhase.set(input.sessionID, "active")
-      const ok = await revertAndPrompt(
-        input.sessionID, agent, extracted.parts, extracted.info.id,
-        { providerID: parsed.providerID, modelID: parsed.modelID },
-        logger, context,
-      )
+      setActiveFallbackParams(input.sessionID, { providerID: parsed.providerID, modelID: parsed.modelID })
+      let ok: boolean
+      try {
+        await context.client.session.prompt({
+          path: { id: input.sessionID },
+          body: {
+            model: { providerID: parsed.providerID, modelID: parsed.modelID },
+            agent,
+            parts: [{ type: "text", text: "Continue the interrupted work from the existing conversation context. Do not restart or repeat the previous request." }],
+          },
+        })
+        ok = true
+      } catch (err) {
+        await logger.warn("Compacting: large model prompt failed", {
+          sessionID: input.sessionID, largeModel: lcf.model,
+          error: err instanceof Error ? err.message : String(err),
+        })
+        ok = false
+      }
       if (!ok) {
         largeContextPhase.delete(input.sessionID)
+        activeFallbackParams.delete(input.sessionID)
         await logger.warn("Compacting: large model unavailable, reverting to normal compaction", {
           sessionID: input.sessionID, largeModel: lcf.model,
         })
-        const rescueModel = currentModel ?? original
+        const rescueModel: { providerID: string; modelID: string } =
+          currentModel ?? { providerID: original.providerID, modelID: original.modelID }
         const rescueOk = await revertAndPrompt(
           input.sessionID, agent, extracted.parts, extracted.info.id,
-          { providerID: rescueModel.providerID, modelID: rescueModel.modelID },
-          logger, context,
+          rescueModel, logger, context,
         )
         if (!rescueOk) {
           await logger.error("Compacting: failed to restore session after large model switch failure", {
@@ -631,22 +711,45 @@ export async function createPlugin(context: PluginInput): Promise<Hooks> {
         const phase = largeContextPhase.get(props.sessionID)
         const lcf = config.largeContextFallback
         if (phase === "active" && lcf) {
+          const original = largeContextSessions.get(props.sessionID)
+          if (!original) {
+            await logger.warn("Idle: cannot trigger summarize, no original model tracked", {
+              sessionID: props.sessionID,
+            })
+            return
+          }
           const parsed = parseModel(lcf.model)
           await logger.info("Idle: large model finished, triggering summarize for compact", {
-            sessionID: props.sessionID,
+            sessionID: props.sessionID, originalModel: `${original.providerID}/${original.modelID}`,
           })
           largeContextPhase.set(props.sessionID, "summarizing")
-          try {
-            await context.client.session.summarize({
-              path: { id: props.sessionID },
-              body: { providerID: parsed.providerID, modelID: parsed.modelID },
-            })
-          } catch (err) {
-            await logger.warn("Idle: failed to trigger summarize", {
-              sessionID: props.sessionID,
-              error: err instanceof Error ? err.message : String(err),
-            })
-            largeContextPhase.delete(props.sessionID)
+          // Try original model first (correct compaction target size).
+          // If it fails (context too large for original model), fall back to large model.
+          const trySummarize = async (label: string, p: { providerID: string; modelID: string }): Promise<boolean> => {
+            try {
+              await context.client.session.summarize({
+                path: { id: props.sessionID },
+                body: { providerID: p.providerID, modelID: p.modelID },
+              })
+              return true
+            } catch (err) {
+              await logger.warn(`Idle: ${label} summarize failed`, {
+                sessionID: props.sessionID,
+                model: `${p.providerID}/${p.modelID}`,
+                error: err instanceof Error ? err.message : String(err),
+              })
+              return false
+            }
+          }
+          const originalOk = await trySummarize("original", { providerID: original.providerID, modelID: original.modelID })
+          if (!originalOk) {
+            const largeOk = await trySummarize("large", { providerID: parsed.providerID, modelID: parsed.modelID })
+            if (!largeOk) {
+              await logger.warn("Idle: both summarize attempts failed, compaction may be inconsistent", {
+                sessionID: props.sessionID,
+              })
+              largeContextPhase.delete(props.sessionID)
+            }
           }
         }
       }
@@ -738,4 +841,5 @@ export const _forTesting = {
   revertAndPrompt,
   isLargeContextAgent,
   largeContextPhase,
+  shouldSkipLargeContextFallback,
 }
