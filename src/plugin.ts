@@ -7,6 +7,7 @@ import { createLogger } from "./log"
 import {
   isCooldownActive,
   activateCooldown,
+  deactivateCooldown,
   resetIfExpired,
   removeSession,
   incrementBackoff,
@@ -21,6 +22,7 @@ const activeFallbackParams = new Map<string, FallbackModel>()
 
 type LargeContextPhase = "active" | "summarizing"
 const largeContextSessions = new Map<string, { providerID: string; modelID: string }>()
+const currentModelSessions = new Map<string, { providerID: string; modelID: string }>()
 const largeContextPhase = new Map<string, LargeContextPhase>()
 
 function isLargeContextAgent(agent: string | undefined, agents: string[]): boolean {
@@ -72,7 +74,7 @@ async function fetchSessionData(sessionID: string, context: PluginInput, logger:
     extracted = extractUserParts(messages as any, { allowSynthetic: true })
   }
   const lastAssistant = [...messages].reverse().find(m => m.info.role === "assistant")
-  const currentModel = lastAssistant?.info.model ?? hookInput?.model ?? largeContextSessions.get(sessionID)
+  const currentModel = lastAssistant?.info.model ?? hookInput?.model ?? currentModelSessions.get(sessionID)
   return { messages, extracted, currentModel }
 }
 
@@ -286,15 +288,34 @@ export async function createPlugin(context: PluginInput): Promise<Hooks> {
   return {
     config: async (_input) => {},
     "chat.params": async (input, output) => {
-      if (input.model && !largeContextSessions.has(input.sessionID)) {
-        largeContextSessions.set(input.sessionID, {
+      if (input.model) {
+        const prev = currentModelSessions.get(input.sessionID)
+        const changed = !prev || prev.providerID !== input.model.providerID || prev.modelID !== input.model.id
+
+        currentModelSessions.set(input.sessionID, {
           providerID: input.model.providerID,
           modelID: input.model.id,
         })
-        await logger.info("Tracked original model for session", {
-          sessionID: input.sessionID,
-          model: `${input.model.providerID}/${input.model.id}`,
-        })
+
+        if (changed) {
+          deactivateCooldown(input.sessionID)
+          await logger.info("Model changed, cooldown reset", {
+            sessionID: input.sessionID,
+            model: `${input.model.providerID}/${input.model.id}`,
+            previousModel: prev ? `${prev.providerID}/${prev.modelID}` : "none",
+          })
+        }
+
+        if (!largeContextSessions.has(input.sessionID)) {
+          largeContextSessions.set(input.sessionID, {
+            providerID: input.model.providerID,
+            modelID: input.model.id,
+          })
+          await logger.info("Tracked original model for session", {
+            sessionID: input.sessionID,
+            model: `${input.model.providerID}/${input.model.id}`,
+          })
+        }
       }
 
       const fallback = getAndClearFallbackParams(input.sessionID)
@@ -551,15 +572,6 @@ export async function createPlugin(context: PluginInput): Promise<Hooks> {
           if (isRateLimitMessage(props.status.message)) {
             const attempt = props.status.attempt ?? 1
 
-            await logger.info("DEBUG session.status retry", {
-              sessionID: props.sessionID,
-              attempt,
-              rawAttempt: props.status.attempt,
-              message: props.status.message,
-              next: props.status.next,
-              maxRetries: config.maxRetries,
-            })
-
             if (attempt <= config.maxRetries) {
               await logger.info("Allowing opencode retry within maxRetries", {
                 sessionID: props.sessionID,
@@ -599,6 +611,7 @@ export async function createPlugin(context: PluginInput): Promise<Hooks> {
         if (props.info?.id) {
           removeSession(props.info.id)
           largeContextSessions.delete(props.info.id)
+          currentModelSessions.delete(props.info.id)
           largeContextPhase.delete(props.info.id)
           await logger.info("Session cleaned up", { sessionID: props.info.id })
         }

@@ -22,6 +22,13 @@ export function activateCooldown(sessionID: string, cooldownMs: number): void {
   state.cooldownEndTime = Date.now() + cooldownMs
 }
 
+export function deactivateCooldown(sessionID: string): void {
+  const state = sessions.get(sessionID)
+  if (state) {
+    state.fallbackActive = false
+  }
+}
+
 export function incrementBackoff(sessionID: string): number {
   const state = ensureState(sessionID)
   state.backoffLevel++
