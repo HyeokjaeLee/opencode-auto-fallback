@@ -53,17 +53,8 @@ interface ToastClient {
 
 type ClientWithTui = PluginInput["client"] & { tui?: ToastClient }
 
-import { BUILTIN_CONTEXT_WINDOWS } from "./context-windows"
-
-function contextWindowFor(
-  model: { providerID: string; modelID: string },
-  contextWindows?: Record<string, number>,
-): number | undefined {
-  const key = `${model.providerID}/${model.modelID}`
-  const detected = getModelContextLimit(key)
-  if (detected !== undefined) return detected
-  if (contextWindows?.[key] !== undefined) return contextWindows[key]
-  return BUILTIN_CONTEXT_WINDOWS[key]
+function contextWindowFor(model: { providerID: string; modelID: string }): number | undefined {
+  return getModelContextLimit(`${model.providerID}/${model.modelID}`)
 }
 
 function isLargeContextAgent(agent: string | undefined, agents: string[]): boolean {
@@ -350,7 +341,7 @@ export async function createPlugin(context: PluginInput): Promise<Hooks> {
 
         getOrSetOriginalModel(input.sessionID, input.model.providerID, input.model.id)
 
-        const ctxLimit = (input.model as { limit?: { context?: number } }).limit?.context
+        const ctxLimit = input.model.limit.context
         if (ctxLimit !== undefined) {
           const modelKey = `${input.model.providerID}/${input.model.id}`
           setModelContextLimit(modelKey, ctxLimit)
@@ -360,6 +351,24 @@ export async function createPlugin(context: PluginInput): Promise<Hooks> {
               model: modelKey,
               contextLimit: ctxLimit,
             })
+          }
+        }
+
+        // Pre-fetch large context fallback model's limit from same provider
+        const lcf = config.largeContextFallback
+        if (lcf) {
+          const lcfParsed = parseModel(lcf.model)
+          const lcfKey = `${lcfParsed.providerID}/${lcfParsed.modelID}`
+          if (!getModelContextLimit(lcfKey) && lcfParsed.providerID === input.model.providerID) {
+            const largeModel = input.provider.info.models[lcfParsed.modelID]
+            if (largeModel?.limit?.context) {
+              setModelContextLimit(lcfKey, largeModel.limit.context)
+              await logger.info("Pre-fetched large context fallback model limit", {
+                sessionID: input.sessionID,
+                model: lcfKey,
+                contextLimit: largeModel.limit.context,
+              })
+            }
           }
         }
       }
@@ -443,8 +452,8 @@ export async function createPlugin(context: PluginInput): Promise<Hooks> {
       }
 
       const effectiveCurrent = currentModel ?? original
-      const currentWindow = contextWindowFor(effectiveCurrent, lcf.contextWindows)
-      const largeWindow = contextWindowFor(parsed, lcf.contextWindows)
+      const currentWindow = contextWindowFor(effectiveCurrent)
+      const largeWindow = contextWindowFor(parsed)
       if (currentWindow !== undefined && largeWindow !== undefined &&
         shouldSkipLargeContextFallback(currentWindow, largeWindow, lcf.minContextRatio ?? 0.1)
       ) {
@@ -645,48 +654,11 @@ export async function createPlugin(context: PluginInput): Promise<Hooks> {
       if (event.type === "session.idle") {
         const props = event.properties as { sessionID: string }
         const phase = getLargeContextPhase(props.sessionID)
-        const lcf = config.largeContextFallback
-        if (phase === "active" && lcf) {
-          const original = getOriginalModel(props.sessionID)
-          if (!original) {
-            await logger.warn("Idle: cannot trigger summarize, no original model tracked", {
-              sessionID: props.sessionID,
-            })
-            return
-          }
-          const parsed = parseModel(lcf.model)
-          await logger.info("Idle: large model finished, triggering summarize for compact", {
-            sessionID: props.sessionID, originalModel: `${original.providerID}/${original.modelID}`,
+        if (phase === "active") {
+          await logger.info("Idle: large model finished, cleaning up phase (no compact triggered)", {
+            sessionID: props.sessionID,
           })
-          setLargeContextPhase(props.sessionID, "summarizing")
-          // Try original model first (correct compaction target size).
-          // If it fails (context too large for original model), fall back to large model.
-          const trySummarize = async (label: string, p: { providerID: string; modelID: string }): Promise<boolean> => {
-            try {
-              await context.client.session.summarize({
-                path: { id: props.sessionID },
-                body: { providerID: p.providerID, modelID: p.modelID },
-              })
-              return true
-            } catch (err) {
-              await logger.warn(`Idle: ${label} summarize failed`, {
-                sessionID: props.sessionID,
-                model: `${p.providerID}/${p.modelID}`,
-                error: err instanceof Error ? err.message : String(err),
-              })
-              return false
-            }
-          }
-          const originalOk = await trySummarize("original", { providerID: original.providerID, modelID: original.modelID })
-          if (!originalOk) {
-            const largeOk = await trySummarize("large", { providerID: parsed.providerID, modelID: parsed.modelID })
-            if (!largeOk) {
-              await logger.warn("Idle: both summarize attempts failed, compaction may be inconsistent", {
-                sessionID: props.sessionID,
-              })
-              deleteLargeContextPhase(props.sessionID)
-            }
-          }
+          deleteLargeContextPhase(props.sessionID)
         }
       }
       if (event.type === "session.status") {

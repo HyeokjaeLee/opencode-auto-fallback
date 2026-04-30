@@ -104,12 +104,6 @@ When an agent's context window fills up mid-task, automatically switch to a larg
   "largeContextFallback": {
     "agents": ["sisyphus", "explore"],
     "model": "openai/gpt-5.5",
-    // Optional: define model context window sizes to guard against
-    // switching to a model with similar context capacity
-    "contextWindows": {
-      "openai/gpt-4o": 128000,
-      "openai/gpt-5.5": 2097152,
-    },
     // Optional: minimum ratio difference required to trigger fallback
     "minContextRatio": 0.1,
   },
@@ -120,10 +114,9 @@ When an agent's context window fills up mid-task, automatically switch to a larg
 | ----------------- | ----------------------------------------------------------------------------------------------- |
 | `agents`          | List of agent names to apply this behavior to                                                   |
 | `model`           | Model to switch to when context fills up                                                        |
-| `contextWindows`  | Maps `"provider/model"` to token limit. When configured, skips fallback if windows are too similar |
 | `minContextRatio` | Minimum fractional increase in context window to trigger fallback (default `0.1` = 10%)         |
 
-When `contextWindows` is configured, the plugin compares the current model's context window with the large model's. If the large model's window is within `(1 + minContextRatio) × current` (i.e., not sufficiently larger), the fallback is skipped and normal compaction proceeds instead.
+The plugin reads context window sizes from the SDK's model metadata automatically (`input.model.limit.context`). When both the current model and the large fallback model have been used in the session, their limits are known and the 10% ratio check is applied. If the large model hasn't been used yet (first compact), its limit is unknown and the fallback proceeds without the ratio check.
 
 **Flow:**
 

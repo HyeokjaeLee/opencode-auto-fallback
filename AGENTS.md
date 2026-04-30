@@ -17,7 +17,7 @@ opencode-auto-fallback/
 │   ├── types.ts              # All interfaces/types (FallbackConfig, FallbackModel, ToastOptions, etc.)
 │   ├── config.ts             # Config loading, auto-generation, chain resolution
 │   ├── constants.ts          # HTTP status code sets + backoff base + error patterns
-│   ├── context-windows.ts    # Builtin model context window sizes
+
 │   ├── decision.ts           # classifyError() — statusCode + isRetryable → immediate | retry | ignore
 │   ├── session-state.ts      # Per-session cooldown + backoff level
 │   ├── provider-state.ts     # Per-model timed cooldown (Map<provider/model, expiry>)

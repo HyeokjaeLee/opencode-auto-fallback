@@ -34,7 +34,6 @@ export interface LargeContextFallbackConfig {
   agents: string[]
   model: string
   /** Maps "provider/model" to context window token limit. Used to skip fallback when window sizes are too similar. */
-  contextWindows?: Record<string, number>
   /** Minimum fractional increase in context window required to trigger fallback (default 0.1 = 10%) */
   minContextRatio?: number
 }
