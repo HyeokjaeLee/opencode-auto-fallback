@@ -235,10 +235,6 @@ async function handleImmediate(
   await tryFallbackChain(sessionID, chain, extracted.info.agent, extracted.parts, extracted.info.id, logger, context)
 }
 
-function findRetryPart(parts: any[]): any {
-  return parts.find((p: any) => p.type === "retry")
-}
-
 export async function createPlugin(context: PluginInput): Promise<Hooks> {
   const config = loadConfig()
   const logger = createLogger(config.logging)
@@ -288,64 +284,7 @@ export async function createPlugin(context: PluginInput): Promise<Hooks> {
   }).catch(() => {})
 
   return {
-    config: async (input) => {
-      if (input.experimental === undefined) {
-        (input as any).experimental = {}
-      }
-      input.experimental!.chatMaxRetries = 0
-      // SSE-level retry happens below chat-level and ignores chatMaxRetries.
-      // Set sseMaxRetryAttempts to 0 so the SSE client breaks after the first non-200 response,
-      // allowing our plugin's session.error handler to take over the fallback logic.
-      if ((input.experimental as any).sseMaxRetryAttempts === undefined) {
-        (input.experimental as any).sseMaxRetryAttempts = 0
-      }
-      await logger.info("Disabled opencode built-in retry", {
-        chatMaxRetries: input.experimental!.chatMaxRetries,
-        sseMaxRetryAttempts: (input.experimental as any).sseMaxRetryAttempts,
-        experimentalKeys: Object.keys(input.experimental ?? {}),
-      })
-    },
-    "chat.message": async (input, output) => {
-      const partTypes = (output.parts ?? []).map((p: any) => p.type)
-      await logger.info("chat.message hook fired", {
-        sessionID: input.sessionID,
-        partTypes,
-        partCount: (output.parts ?? []).length,
-      })
-
-      const retryPart = findRetryPart(output.parts)
-      if (!retryPart) {
-        await logger.info("No retry part found in output.parts — skipping", {
-          sessionID: input.sessionID,
-          partTypes,
-        })
-        return
-      }
-
-      const statusCode: number | undefined = retryPart.error?.data?.statusCode
-      const isRetryable: boolean | undefined = retryPart.error?.data?.isRetryable
-
-      const decision = classifyError(statusCode, isRetryable, isCooldownActive(input.sessionID))
-
-      if (decision.action === "immediate") {
-        await logger.info("Immediate error", {
-          sessionID: input.sessionID,
-          httpStatus: decision.httpStatus,
-          isRetryable: decision.isRetryable,
-        })
-        await handleImmediate(input.sessionID, config, logger, context, input)
-        return
-      }
-
-      if (decision.action === "retry") {
-        await logger.info("Retryable error", {
-          sessionID: input.sessionID,
-          httpStatus: decision.httpStatus,
-          isRetryable: decision.isRetryable,
-        })
-        await handleRetry(input.sessionID, config, logger, context, input)
-      }
-    },
+    config: async (_input) => {},
     "chat.params": async (input, output) => {
       if (input.model && !largeContextSessions.has(input.sessionID)) {
         largeContextSessions.set(input.sessionID, {
