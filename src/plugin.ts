@@ -251,7 +251,7 @@ export async function createPlugin(context: PluginInput): Promise<Hooks> {
       duration: 5000,
     }, logger)
 
-    const ok = await tryInstallUpdate()
+    const ok = await tryInstallUpdate(info.latest)
     if (ok) {
       await logger.info(`Updated to ${info.latest}`)
       await showToastSafely(context, {

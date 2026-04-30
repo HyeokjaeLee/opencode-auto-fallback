@@ -75,6 +75,18 @@ function invalidatePackage(workspaceDir: string): void {
   }
 }
 
+function readInstalledPackageVersion(workspaceDir: string): string | null {
+  const pkgJsonPath = join(workspaceDir, "node_modules", PACKAGE_NAME, "package.json")
+  if (!existsSync(pkgJsonPath)) return null
+
+  try {
+    const content = JSON.parse(readFileSync(pkgJsonPath, "utf-8")) as { version?: unknown }
+    return typeof content.version === "string" ? content.version : null
+  } catch {
+    return null
+  }
+}
+
 /**
  * Sync the workspace package.json to use "latest" so bun resolves the newest version.
  */
@@ -85,7 +97,7 @@ function syncPackageJson(workspaceDir: string): void {
   writeFileSync(pkgJsonPath, JSON.stringify(content, null, 2) + "\n", "utf-8")
 }
 
-export function tryInstallUpdate(): Promise<boolean> {
+export function tryInstallUpdate(expectedVersion: string): Promise<boolean> {
   return new Promise((resolve) => {
     const workspaceDir = findIsolatedPackageDir()
     if (!workspaceDir) {
@@ -94,13 +106,17 @@ export function tryInstallUpdate(): Promise<boolean> {
     }
 
     syncPackageJson(workspaceDir)
-    invalidatePackage(workspaceDir)
-
     const hasBunLock = existsSync(join(workspaceDir, "bun.lock")) || existsSync(join(workspaceDir, "bun.lockb"))
     const hasNpmLock = existsSync(join(workspaceDir, "package-lock.json"))
 
+    if (!hasBunLock && !hasNpmLock) {
+      invalidatePackage(workspaceDir)
+    }
+
     const bin = hasBunLock || !hasNpmLock ? "bun" : "npm"
-    const args = [bin === "bun" ? "install" : "install"]
+    const args = bin === "bun"
+      ? hasBunLock ? ["update", PACKAGE_NAME] : ["install"]
+      : ["install", `${PACKAGE_NAME}@latest`]
 
     const proc = spawn(bin, args, {
       cwd: workspaceDir,
@@ -109,7 +125,7 @@ export function tryInstallUpdate(): Promise<boolean> {
     })
 
     proc.on("close", (code) => {
-      resolve(code === 0)
+      resolve(code === 0 && readInstalledPackageVersion(workspaceDir) === expectedVersion)
     })
 
     proc.on("error", () => {
