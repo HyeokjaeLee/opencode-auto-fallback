@@ -455,8 +455,8 @@ export async function createPlugin(context: PluginInput): Promise<PluginHooks> {
         return
       }
 
-      if (hasActiveFork(input.sessionID)) {
-        await logger.info("Compacting: active fork exists, skipping", {
+      if (hasActiveFork(input.sessionID) || getForkTracking(input.sessionID)) {
+        await logger.info("Compacting: active fork or fork session exists, skipping", {
           sessionID: input.sessionID,
         })
         return
