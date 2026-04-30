@@ -9,6 +9,7 @@ import type {
   ModelReference,
   ResolvedModel,
   AgentFallbackMap,
+  LargeContextFallbackConfig,
 } from "./types";
 
 interface RawConfig {
@@ -18,7 +19,7 @@ interface RawConfig {
   cooldownMs?: number;
   maxRetries?: number;
   logging?: boolean;
-  largeContextFallback?: { agents: string[]; model: string };
+  largeContextFallback?: LargeContextFallbackConfig;
 }
 
 const DEFAULT_CONFIG: FallbackConfig = {
@@ -163,7 +164,10 @@ export function loadConfig(): FallbackConfig {
       cooldownMs: userConfig.cooldownMs ?? DEFAULT_CONFIG.cooldownMs,
       maxRetries: userConfig.maxRetries ?? DEFAULT_CONFIG.maxRetries,
       logging: userConfig.logging ?? DEFAULT_CONFIG.logging,
-      largeContextFallback: userConfig.largeContextFallback,
+      largeContextFallback: userConfig.largeContextFallback ? {
+        ...userConfig.largeContextFallback,
+        minContextRatio: userConfig.largeContextFallback.minContextRatio ?? 0.1,
+      } : undefined,
     };
   } catch {
     return DEFAULT_CONFIG;
