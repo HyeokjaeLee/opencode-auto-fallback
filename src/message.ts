@@ -6,7 +6,7 @@ export type PromptPart =
   | { type: "agent"; name: string }
 
 export function isSyntheticPart(part: MessagePart): boolean {
-  return (part as any).synthetic === true
+  return part.synthetic === true
 }
 
 export function convertToPromptPart(part: MessagePart): PromptPart | null {
@@ -28,14 +28,16 @@ export function extractUserParts(
   messages: MessageWithParts[],
   options?: { allowSynthetic?: boolean },
 ): { info: MessageInfo; parts: PromptPart[] } | null {
-  const lastUserMessage = [...messages].reverse().find(m => m.info.role === "user")
-  if (!lastUserMessage) return null
+  const userMessages = [...messages].reverse().filter(m => m.info.role === "user")
 
-  const parts = lastUserMessage.parts
-    .filter(p => options?.allowSynthetic || !isSyntheticPart(p))
-    .map(p => convertToPromptPart(p))
-    .filter((p): p is PromptPart => p !== null)
+  for (const message of userMessages) {
+    const parts = message.parts
+      .filter(p => options?.allowSynthetic || !isSyntheticPart(p))
+      .map(p => convertToPromptPart(p))
+      .filter((p): p is PromptPart => p !== null)
 
-  if (parts.length === 0) return null
-  return { info: lastUserMessage.info, parts }
+    if (parts.length > 0) return { info: message.info, parts }
+  }
+
+  return null
 }

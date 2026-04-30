@@ -69,7 +69,7 @@ async function fetchSessionData(sessionID: string, context: PluginInput, logger:
     extracted = extractUserParts(messages as any, { allowSynthetic: true })
   }
   const lastAssistant = [...messages].reverse().find(m => m.info.role === "assistant")
-  const currentModel = lastAssistant?.info.model ?? hookInput?.model
+  const currentModel = lastAssistant?.info.model ?? hookInput?.model ?? largeContextSessions.get(sessionID)
   return { messages, extracted, currentModel }
 }
 
@@ -154,13 +154,14 @@ async function handleRetry(
 ) {
   const backoffLevel = incrementBackoff(sessionID)
   const { extracted, currentModel } = await fetchSessionData(sessionID, context, logger, hookInput)
-  if (!extracted || !currentModel) {
-    await logger.error("Cannot retry: missing message or model", { sessionID, hasExtracted: !!extracted, hasCurrentModel: !!currentModel })
+  if (!extracted) {
+    await logger.error("Cannot retry: missing user message", { sessionID })
     return
   }
+
   await abortSession(sessionID, context)
 
-  if (backoffLevel <= config.maxRetries) {
+  if (currentModel && backoffLevel <= config.maxRetries) {
     const waitMs = BACKOFF_BASE_MS * Math.pow(2, backoffLevel - 1)
     await logger.info(`Backoff retry ${backoffLevel}/${config.maxRetries} (${waitMs}ms)`, { sessionID })
     await new Promise(resolve => setTimeout(resolve, waitMs))
@@ -169,19 +170,25 @@ async function handleRetry(
       { providerID: currentModel.providerID, modelID: currentModel.modelID },
       logger, context,
     )
-    if (ok) await logger.info("Retry succeeded with same model", { sessionID, backoffLevel })
-    return
+    if (ok) {
+      await logger.info("Retry succeeded with same model", { sessionID, backoffLevel })
+      return
+    }
   }
 
   resetBackoff(sessionID)
-  await showToastSafely(context, {
-    title: "Retries Exhausted",
-    message: `Switching to fallback after ${config.maxRetries} retries`,
-    variant: "warning",
-    duration: 5000,
-  }, logger)
+  if (!currentModel) {
+    await logger.warn("No current model available, going straight to fallback chain", { sessionID })
+  } else {
+    await showToastSafely(context, {
+      title: "Retries Exhausted",
+      message: `Switching to fallback after ${config.maxRetries} retries`,
+      variant: "warning",
+      duration: 5000,
+    }, logger)
+    await logger.info(`Retries exhausted (${backoffLevel}), starting fallback chain`, { sessionID })
+  }
   const chain = getFallbackChain(config, extracted.info.agent)
-  await logger.info(`Retries exhausted (${backoffLevel}), starting fallback chain`, { sessionID })
   if (chain.length === 0) {
     await logger.info("No fallback chain configured for this agent, skipping", { sessionID, agent: extracted.info.agent })
     return
@@ -458,10 +465,13 @@ export async function createPlugin(context: PluginInput): Promise<Hooks> {
           return
         }
 
-        // ProviderAuthError (name: "ProviderAuthError") has no statusCode/isRetryable — treat as immediate
+        // ProviderAuthError & model-not-found errors have no statusCode/isRetryable — treat as immediate
         const isAuthError = err.name === "ProviderAuthError"
+        const isModelNotFound =
+          err.name === "ProviderModelNotFoundError" ||
+          err.data.message?.includes("Model not found")
         const statusCode: number | undefined = err.data.statusCode
-        const isRetryable: boolean | undefined = isAuthError ? false : err.data.isRetryable
+        const isRetryable: boolean | undefined = (isAuthError || isModelNotFound) ? false : err.data.isRetryable
 
         await logger.info("session.error detected", {
           sessionID,

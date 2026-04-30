@@ -11,6 +11,7 @@ import {
 } from "../session-state"
 import { markModelCooldown, isModelInCooldown, clearAllCooldowns } from "../provider-state"
 import { shouldWriteLog } from "../log"
+import { extractUserParts } from "../message"
 import type { FallbackConfig } from "../types"
 
 describe("parseModel", () => {
@@ -110,6 +111,43 @@ describe("getFallbackChain", () => {
 describe("normalizeAgentName", () => {
   it("removes whitespace and zero-width characters before lowercasing", () => {
     expect(normalizeAgentName("​Sisyphus - Ultraworker")).toBe("sisyphus-ultraworker")
+  })
+})
+
+describe("extractUserParts", () => {
+  it("falls back to an earlier user message when the latest user message has no promptable parts", () => {
+    const extracted = extractUserParts([
+      {
+        info: { id: "msg-u1", role: "user", sessionID: "s1", agent: "hephaestus" },
+        parts: [{ id: "p1", type: "text", text: "original task" }],
+      },
+      {
+        info: { id: "msg-a1", role: "assistant", sessionID: "s1", agent: "hephaestus" },
+        parts: [{ id: "p2", type: "text", text: "working" }],
+      },
+      {
+        info: { id: "msg-u2", role: "user", sessionID: "s1", agent: "hephaestus" },
+        parts: [{ id: "p3", type: "step-start" }],
+      },
+    ])
+
+    expect(extracted).toEqual({
+      info: { id: "msg-u1", role: "user", sessionID: "s1", agent: "hephaestus" },
+      parts: [{ type: "text", text: "original task" }],
+    })
+  })
+
+  it("still skips synthetic parts unless explicitly allowed", () => {
+    const messages = [{
+      info: { id: "msg-u1", role: "user" as const, sessionID: "s1", agent: "hephaestus" },
+      parts: [{ id: "p1", type: "text", text: "synthetic task", synthetic: true }],
+    }]
+
+    expect(extractUserParts(messages)).toBeNull()
+    expect(extractUserParts(messages, { allowSynthetic: true })).toEqual({
+      info: { id: "msg-u1", role: "user", sessionID: "s1", agent: "hephaestus" },
+      parts: [{ type: "text", text: "synthetic task" }],
+    })
   })
 })
 

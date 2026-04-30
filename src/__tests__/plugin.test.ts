@@ -274,7 +274,7 @@ describe("handleRetry", () => {
     await handleRetry(SESSION, makeConfig(), noopLogger, ctx)
 
     expect(noopLogger.error).toHaveBeenCalledWith(
-      "Cannot retry: missing message or model",
+      "Cannot retry: missing user message",
       expect.any(Object),
     )
   })

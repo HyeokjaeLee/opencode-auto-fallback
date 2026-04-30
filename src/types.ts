@@ -75,6 +75,7 @@ export interface MessageInfo {
 export interface MessagePart {
   id: string
   type: string
+  synthetic?: boolean
   text?: string
   mime?: string
   filename?: string
