@@ -421,29 +421,35 @@ export async function createPlugin(context: PluginInput): Promise<PluginHooks> {
         output.options.thinking = fallback.thinking
       }
     },
-    "experimental.session.compacting": async (input, _output) => {
+    "experimental.session.compacting": async (input, output) => {
       await logger.info("Compacting hook fired", { sessionID: input.sessionID })
 
-      // DIAGNOSTIC: Is this a fork session? Log all context info.
+      // ---- Fork session: replace compaction prompt with continuation instruction ----
       const forkEntry = getForkTracking(input.sessionID)
       if (forkEntry) {
-        const curModel = getCurrentModel(input.sessionID)
-        const ctxModel = curModel ? `${curModel.providerID}/${curModel.modelID}` : "none"
-        const lcfModel = config.largeContextFallback
-          ? `${parseModel(config.largeContextFallback.model).providerID}/${parseModel(config.largeContextFallback.model).modelID}`
-          : "none"
-        const largeCtxLimit = getModelContextLimit(lcfModel) ?? "unknown"
-        const curCtxLimit = curModel ? getModelContextLimit(`${curModel.providerID}/${curModel.modelID}`) : "unknown"
-        await logger.info("🔍 FORK SESSION: compacting hook fired", {
+        const lastRequest = forkEntry.lastRequest
+        // Clear default context strings; our prompt is self-contained
+        output.context = []
+        if (lastRequest) {
+          output.prompt = `The conversation context was compacted. The LLM must continue working on the task below.
+
+## Last User Request
+"""${lastRequest}"""
+
+## Instructions for the compaction output
+- Restate the user's request as shown above
+- List any files that were being modified or discussed
+- Note the current task status and next steps
+- Preserve all details without condensing — this will be the only record of prior work`
+        } else {
+          output.prompt = "The conversation context was compacted. Preserve the full task context including what was being worked on, what files were involved, and any decisions made. This will be the only record of prior work."
+        }
+        await logger.info("Compacting: replaced prompt for fork session", {
           sessionID: input.sessionID,
-          forkStatus: forkEntry.status,
-          mainSessionID: forkEntry.mainSessionID,
-          currentModel: ctxModel,
-          isLargeModel: ctxModel === lcfModel,
-          currentModelLimit: curCtxLimit,
-          largeModelLimit: largeCtxLimit,
-          agent: forkEntry.agent,
+          promptLength: output.prompt.length,
+          hasLastRequest: !!lastRequest,
         })
+        return
       }
 
       const lcf = config.largeContextFallback
@@ -486,15 +492,6 @@ export async function createPlugin(context: PluginInput): Promise<PluginHooks> {
       if (isModelInCooldown(parsed.providerID, parsed.modelID)) {
         await logger.info("Compacting: large context model in cooldown, falling through to default", {
           sessionID: input.sessionID, largeModel: lcf.model,
-        })
-        return
-      }
-
-      if (forkEntry) {
-        await logger.info("🔍 FORK SESSION: compacting hook exiting via forkEntry check (isLargeModel was false)", {
-          sessionID: input.sessionID,
-          currentModel: currentModel ? `${currentModel.providerID}/${currentModel.modelID}` : "none",
-          largeModel: `${parsed.providerID}/${parsed.modelID}`,
         })
         return
       }
