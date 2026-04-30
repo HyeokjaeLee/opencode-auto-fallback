@@ -209,6 +209,7 @@ function hasErrorText(parts: any[]): string {
 
 function looksLikeError(text: string): boolean {
   if (text.includes("Session Transcript")) return false
+  if (text.startsWith("[CONTEXT]:")) return false
   const lower = text.toLowerCase()
   return lower.includes("error") || lower.includes("failed") || lower.includes("unable")
 }
