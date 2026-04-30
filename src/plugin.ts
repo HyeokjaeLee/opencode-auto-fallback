@@ -559,9 +559,8 @@ export async function createPlugin(context: PluginInput): Promise<PluginHooks> {
       input: { sessionID: string; agent: string },
       output: { enabled: boolean },
     ) => {
-      // Suppress auto-continue when:
-      // 1. This session has an active fork (main session waiting)
-      // 2. This session IS a forked session (prevent loops in the fork)
+      // Suppress auto-continue for both the main session (waiting for fork)
+      // and the fork session itself (prevent re-entering loops like ralph-loop).
       if (hasActiveFork(input.sessionID) || getForkTracking(input.sessionID)) {
         output.enabled = false
         await logger.info("Autocontinue: suppressed (active fork in progress)", {
