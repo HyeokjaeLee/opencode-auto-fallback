@@ -54,6 +54,7 @@ import {
   getSessionOriginalAgent,
   hasActiveFork,
   getForkTracking,
+  getForkByMainSession,
 } from "./state/context-state"
 import { forkSessionForLargeContext, injectForkResult } from "./session-fork"
 
@@ -662,6 +663,21 @@ export async function createPlugin(context: PluginInput): Promise<PluginHooks> {
           await logger.info("Compacted: active fork in progress, main session waits for fork result", {
             sessionID: props.sessionID,
           })
+          // Inject a waiting notification so the user sees their request is being processed.
+          const forkEntry = getForkByMainSession(props.sessionID)
+          if (forkEntry) {
+            await context.client.session.prompt({
+              path: { id: props.sessionID },
+              body: {
+                agent: forkEntry.agent,
+                parts: [{ type: "text", text: "Processing your last request with extended context... The session will resume automatically once it's complete." }],
+              },
+            })
+            await context.client.session.abort({ path: { id: props.sessionID } })
+            await logger.info("Compacted: waiting notification injected, main session aborted", {
+              sessionID: props.sessionID,
+            })
+          }
           return
         }
 
