@@ -22,6 +22,7 @@ export async function forkSessionForLargeContext(
   originalModel: ResolvedModel,
   context: PluginInput,
   logger: ReturnType<typeof createLogger>,
+  lastRequest?: string,
 ): Promise<ForkResult> {
   try {
     const forkResponse = await context.client.session.fork({ path: { id: sessionID } })
@@ -39,6 +40,7 @@ export async function forkSessionForLargeContext(
       largeModel,
       originalModel,
       createdAt: Date.now(),
+      lastRequest,
     }
     setForkTracking(trackingEntry)
     await logger.info("Fork: session forked successfully", {
@@ -114,13 +116,23 @@ export async function injectForkResult(
       return false
     }
 
+    const forkEntry = getForkTracking(forkedSessionID)
+    const lastRequest = forkEntry?.lastRequest
+
+    const parts: Array<{ type: "text"; text: string }> = [
+      { type: "text", text: "Your conversation context was compacted because it reached its limit." },
+    ]
+    if (lastRequest) {
+      parts.push({ type: "text", text: `\n\nYour last task before compaction was:\n"""\n${lastRequest}\n"""` })
+    }
+    parts.push({ type: "text", text: `\n\nHere is the result:\n"""\n${assistantText}\n"""` })
+    parts.push({ type: "text", text: "\n\nContinue the work based on the result above. Proceed with any remaining steps or follow-ups." })
+
     await context.client.session.prompt({
       path: { id: mainSessionID },
       body: {
         agent,
-        parts: [
-          { type: "text", text: `The large context model completed its work. Here is the result:\n\n${assistantText}\n\nReview and adjust the result above as needed.` },
-        ],
+        parts,
       },
     })
 

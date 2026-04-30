@@ -14,7 +14,8 @@ opencode-auto-fallback/
 ├── index.ts                  # Public API: exports createPlugin + types
 ├── src/
 │   ├── plugin.ts             # Orchestration: hooks wiring, update checker (~770 lines)
-│   ├── types.ts              # All interfaces/types (FallbackConfig, FallbackModel, ToastOptions, etc.)
+│   ├── session-fork.ts       # Fork creation, fork result injection (~150 lines)
+│   ├── types.ts              # All interfaces/types (FallbackConfig, FallbackModel, ToastOptions, ForkTrackingEntry, etc.)
 │   ├── config.ts             # Config loading, auto-generation, chain resolution
 │   ├── constants.ts          # HTTP status code sets + backoff base + error patterns
 
@@ -55,7 +56,9 @@ opencode-auto-fallback/
 | Add unit test                 | `src/__tests__/pure-functions.test.ts`                          | Import from module directly                                                        |
 | Add integration test          | `src/__tests__/plugin.test.ts`                                  | Use createMockContext() from mocks.ts                                              |
 | Change large context fallback | `src/plugin.ts` compacting/idle handlers                        | Three-tier context window: SDK auto-detect → config → builtin                     |
-| Change state management       | `src/state/context-state.ts`                                    | Centralized Maps: fallback params, model tracking, phase management               |
+| Change fork creation/logic    | `src/session-fork.ts`                                           | Fork session, inject fork result, tracking entry management                       |
+| Change structured inject msg  | `src/session-fork.ts` injectForkResult()                        | Builds compaction notice + last request + result + continue instruction           |
+| Change state management       | `src/state/context-state.ts`                                    | Centralized Maps: fallback params, model tracking, phase management, fork tracking |
 | Change SDK adapters           | `src/adapters/sdk-adapter.ts`                                   | SDK → domain type conversions with zero `as any`                                  |
 
 ## CODE MAP
@@ -74,6 +77,9 @@ opencode-auto-fallback/
 | `FallbackModel`    | interface | types.ts      | providerID, modelID, variant, temperature, topP, etc.                     |
 | `ToastOptions`     | interface | types.ts      | title, message, variant, duration                                         |
 | `SessionState`     | interface | types.ts      | fallbackActive, cooldownEndTime, backoffLevel                             |
+| `ForkTrackingEntry`| interface | types.ts      | forkedSessionID, mainSessionID, status, agent, lastRequest, etc.         |
+| `forkSessionForLargeContext` | function | session-fork.ts | Forks session with large model, sets up tracking                          |
+| `injectForkResult` | function  | session-fork.ts | Reads fork result, injects structured message into main session            |
 
 ## ERROR CLASSIFICATION PRIORITY
 

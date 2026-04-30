@@ -103,6 +103,8 @@ export interface ForkTrackingEntry {
   largeModel: FallbackModel
   originalModel: ResolvedModel
   createdAt: number
+  /** The last user request text captured before compaction, used to provide context when injecting the fork result back into the main session. */
+  lastRequest?: string
 }
 
 export interface ToastOptions {

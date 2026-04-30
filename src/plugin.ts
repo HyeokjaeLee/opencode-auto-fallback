@@ -499,6 +499,14 @@ export async function createPlugin(context: PluginInput): Promise<PluginHooks> {
         return
       }
 
+      // Capture the last user request text to provide context when injecting fork result
+      const lastRequest = extracted.parts
+        .filter((p): p is PromptPart & { type: "text" } => p.type === "text")
+        .map(p => p.text)
+        .filter(Boolean)
+        .join("\n")
+        .slice(0, 2000)
+
       const forkResult = await forkSessionForLargeContext(
         input.sessionID,
         agent,
@@ -506,6 +514,7 @@ export async function createPlugin(context: PluginInput): Promise<PluginHooks> {
         { providerID: original.providerID, modelID: original.modelID },
         context,
         logger,
+        lastRequest,
       )
 
       if (forkResult.ok) {

@@ -243,7 +243,7 @@ describe("injectForkResult", () => {
     const ctx = createMockContext({ messages: mockMessages, prompt: mockPrompt })
 
     // Seed a tracking entry so status transitions can be observed
-    setForkTracking(createTrackingEntry({ status: "running" }))
+    setForkTracking(createTrackingEntry({ status: "running", lastRequest: "optimize the query" }))
 
     const result = await injectForkResult(
       FORKED_SESSION_ID,
@@ -266,8 +266,12 @@ describe("injectForkResult", () => {
     const promptCall = mockPrompt.mock.calls[0][0]
     expect(promptCall.path).toEqual({ id: MAIN_SESSION_ID })
     expect(promptCall.body.agent).toBe(AGENT)
-    // The large-model result is embedded in the inject prompt
-    expect(promptCall.body.parts[0].text).toContain("Here is the result")
+    // The result is embedded in the inject prompt with structured context
+    const injectText = promptCall.body.parts.map((p: { text: string }) => p.text).join("")
+    expect(injectText).toContain("Your conversation context was compacted")
+    expect(injectText).toContain("Your last task before compaction was")
+    expect(injectText).toContain("Here is the result")
+    expect(injectText).toContain("Continue the work based on the result above")
 
     // Final status is "done"
     expect(getForkTracking(FORKED_SESSION_ID)?.status).toBe("done")

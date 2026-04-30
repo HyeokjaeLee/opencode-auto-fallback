@@ -10,7 +10,7 @@ OpenCode plugin that automatically detects model errors and switches to a fallba
 - **Default‑retry safety net**: any unrecognized error is treated as retryable
 - **Zero config startup**: auto-generates `fallback.json` with sensible defaults on first run
 - **Toast notifications**: terminal toasts when fallback is triggered
-- **Large context support**: automatically switches to a larger model when context fills up
+- **Large context fallback**: automatically forks the session with a larger context model when context fills up, then injects the result back into the main session with structured context
 
 ## Installation
 
@@ -97,7 +97,7 @@ If the auto-update fails for any reason, a toast notification appears with the m
 
 ### Large Context Fallback
 
-When an agent's context window fills up mid-task, automatically switch to a larger model to finish the work without interruption. After the task completes and the large model compacts, switch back to the original model with the compacted context.
+When an agent's context window fills up mid-task, automatically fork the session with a larger context model to finish the work without losing the main session's progress. The main session waits while the fork handles the work, then receives the result with structured context about what happened during compaction.
 
 ```jsonc
 {
@@ -121,12 +121,31 @@ The plugin reads context window sizes from the SDK's model metadata automaticall
 **Flow:**
 
 ```
-original model working → context full (auto compact) → switch to large model
-    → large model finishes task → idle → large model compacts
-    → switch back to original model (compacted context)
+original model working → context full → auto compact triggered
+    → plugin forks the session with the large context model
+    → main session pauses (auto-continue suppressed)
+    → forked session processes the full context with large model
+    → forked session completes → result injected into main session
+        with compaction context:
+        • conversation was compacted (context was full)
+        • the last task before compaction
+        • the fork's result
+    → main session continues with original model and full context
 ```
 
 > **Note:** Manual `/compact` commands do **not** trigger large context fallback — only automatic compaction (when context fills up from an assistant response) activates it.
+
+#### Behavior Details
+
+- **Session Forking**: When compaction triggers, the plugin forks the current session. The forked session uses the large context model while preserving the full conversation history.
+- **Main Session Pause**: The main session's auto-continue is suppressed during fork execution. It idles until the fork completes.
+- **Structured Result Injection**: When the fork finishes, the result is injected into the main session with:
+  - A notice that context was compacted
+  - The last user request before compaction (as context reminder)
+  - The fork's response
+  - An explicit instruction to continue work based on the result
+- **Fork Timeout**: If the forked session doesn't complete within a configurable timeout, it's marked as failed and the main session proceeds with normal compaction.
+- **Cooldown Safety**: If the large context model is in cooldown (e.g., from a previous error), the fallback is skipped and normal compaction proceeds.
 
 #### Fallback Model Entry
 
@@ -198,7 +217,7 @@ bun install
 # Type check
 tsc --noEmit
 
-# Run tests (73 tests)
+# Run tests (82 tests)
 bun vitest run
 
 # Bump version (CI auto-publishes)
