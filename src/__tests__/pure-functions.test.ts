@@ -10,6 +10,7 @@ import {
   removeSession,
 } from "../session-state"
 import { markModelCooldown, isModelInCooldown, clearAllCooldowns } from "../provider-state"
+import { shouldWriteLog } from "../log"
 import type { FallbackConfig } from "../types"
 
 describe("parseModel", () => {
@@ -109,6 +110,22 @@ describe("getFallbackChain", () => {
 describe("normalizeAgentName", () => {
   it("removes whitespace and zero-width characters before lowercasing", () => {
     expect(normalizeAgentName("​Sisyphus - Ultraworker")).toBe("sisyphus-ultraworker")
+  })
+})
+
+describe("shouldWriteLog", () => {
+  it("filters high-volume event received logs", () => {
+    expect(shouldWriteLog("event received", { type: "message.part.delta" })).toBe(false)
+    expect(shouldWriteLog("event received", { type: "session.idle" })).toBe(false)
+  })
+
+  it("keeps meaningful event received logs", () => {
+    expect(shouldWriteLog("event received", { type: "session.error" })).toBe(true)
+    expect(shouldWriteLog("event received", { type: "session.deleted" })).toBe(true)
+  })
+
+  it("keeps non-generic log messages", () => {
+    expect(shouldWriteLog("Retryable error", { type: "message.part.delta" })).toBe(true)
   })
 })
 

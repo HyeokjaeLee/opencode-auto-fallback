@@ -12,6 +12,15 @@ const MAX_LINES = 500
 
 type Level = "INFO" | "WARN" | "ERROR"
 
+const NOISY_EVENT_TYPES = new Set([
+  "message.part.delta",
+  "message.part.updated",
+  "message.updated",
+  "session.status",
+  "session.idle",
+  "session.updated",
+])
+
 let dirPromise: Promise<void> | null = null
 
 function ensureDir(): Promise<void> {
@@ -34,11 +43,34 @@ async function trimLogFile(): Promise<void> {
   } catch {}
 }
 
+function getEventType(extra?: Record<string, unknown>): string | undefined {
+  const directType = extra?.type
+  if (typeof directType === "string") return directType
+
+  const event = extra?.event
+  if (event && typeof event === "object" && "type" in event) {
+    const eventType = event.type
+    if (typeof eventType === "string") return eventType
+  }
+
+  return undefined
+}
+
+export function shouldWriteLog(message: string, extra?: Record<string, unknown>): boolean {
+  const normalizedMessage = message.trim().toLowerCase()
+  if (normalizedMessage !== "event received") return true
+
+  const eventType = getEventType(extra)
+  return eventType === undefined || !NOISY_EVENT_TYPES.has(eventType)
+}
+
 export async function log(
   level: Level,
   message: string,
   extra?: Record<string, unknown>
 ): Promise<void> {
+  if (!shouldWriteLog(message, extra)) return
+
   await ensureDir()
   const timestamp = new Date().toISOString()
   const extraStr = extra ? " " + JSON.stringify(extra) : ""
