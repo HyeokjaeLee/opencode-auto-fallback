@@ -57,7 +57,7 @@ import {
   getForkTracking,
 } from "./state/context-state"
 
-import { forkSessionForLargeContext, sendForkPrompt, injectForkResult } from "./session-fork"
+import { forkSessionForLargeContext, injectForkResult } from "./session-fork"
 
 // tui is available at runtime but not typed in the SDK
 
@@ -534,19 +534,6 @@ export async function createPlugin(context: PluginInput): Promise<PluginHooks> {
           sessionID: input.sessionID,
           forkedSessionID: forkResult.forkedSessionID,
         })
-        // Dispatch the fork prompt asynchronously so main session compaction
-        // and fork LLM processing run in parallel.
-        const forkedSessionID = forkResult.forkedSessionID
-        if (forkedSessionID) {
-          const trackingEntry = getForkTracking(forkedSessionID)
-          if (trackingEntry) {
-            sendForkPrompt(trackingEntry, context, logger)
-              .catch(err => logger.error("Compacting: async fork prompt failed", {
-                forkedSessionID,
-                error: String(err),
-              }))
-          }
-        }
         return
       }
 
@@ -591,6 +578,11 @@ export async function createPlugin(context: PluginInput): Promise<PluginHooks> {
         const err = props.error
         if (!err) {
           await logger.info("session.error event without error payload", { sessionID })
+          return
+        }
+
+        if (err.name === "MessageAbortedError") {
+          await logger.info("User-initiated abort, ignoring", { sessionID })
           return
         }
 
@@ -651,15 +643,6 @@ export async function createPlugin(context: PluginInput): Promise<PluginHooks> {
       }
       if (event.type === "session.compacted") {
         const props = event.properties as { sessionID: string }
-        // Fork session has completed its initial compaction — send the prompt now.
-        const compactedForkEntry = getForkTracking(props.sessionID)
-        if (compactedForkEntry && compactedForkEntry.status === "forking") {
-          await logger.info("Compacted: fork session compacted, sending prompt", {
-            sessionID: props.sessionID,
-          })
-          await sendForkPrompt(compactedForkEntry, context, logger)
-          return
-        }
         await logger.info("Compacted event received", { sessionID: props.sessionID })
         const lcf = config.largeContextFallback
         if (!lcf) {
@@ -732,15 +715,6 @@ export async function createPlugin(context: PluginInput): Promise<PluginHooks> {
       }
       if (event.type === "session.idle") {
         const props = event.properties as { sessionID: string }
-        // Fork session is idle after creation (no compaction needed) — send prompt.
-        const idleForkEntry = getForkTracking(props.sessionID)
-        if (idleForkEntry && idleForkEntry.status === "forking") {
-          await logger.info("Idle: fork session ready, sending prompt", {
-            sessionID: props.sessionID,
-          })
-          await sendForkPrompt(idleForkEntry, context, logger)
-          return
-        }
         const phase = getLargeContextPhase(props.sessionID)
         if (phase === "active") {
           await logger.info("Idle: large model finished, cleaning up phase (no compact triggered)", {

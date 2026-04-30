@@ -95,10 +95,10 @@ describe("forkSessionForLargeContext", () => {
     // Prompt is NOT sent from forkSessionForLargeContext — it is dispatched
     // asynchronously when the fork session's compaction completes.
 
-    // Tracking entry is created with "forking" status (prompt sent later)
+    // Tracking entry is created with "running" status (prompt sent immediately)
     const entry = getForkTracking(FORKED_SESSION_ID)
     expect(entry).toBeDefined()
-    expect(entry!.status).toBe("forking")
+    expect(entry!.status).toBe("running")
     expect(entry!.agent).toBe(AGENT)
     expect(entry!.largeModel).toEqual(largeModel)
     expect(entry!.originalModel).toEqual(originalModel)
@@ -180,9 +180,9 @@ describe("forkSessionForLargeContext", () => {
         noopLogger,
       )
 
-      // Fork succeeded and status is "forking" (prompt sent later)
+      // Fork succeeded and status is "running" (prompt sent immediately)
       expect(result.ok).toBe(true)
-      expect(getForkTracking(FORKED_SESSION_ID)?.status).toBe("forking")
+      expect(getForkTracking(FORKED_SESSION_ID)?.status).toBe("running")
 
       // Advance clock beyond the timeout threshold
       vi.advanceTimersByTime(FORK_TIMEOUT_MS + 1)

@@ -55,10 +55,25 @@ export async function forkSessionForLargeContext(
       largeModel: `${largeModel.providerID}/${largeModel.modelID}`,
     })
 
-    // Prompt is NOT sent here — it will be sent asynchronously when the fork
-    // session's initial compaction completes (detected via session.compacted
-    // or session.idle event). This lets the main session's compaction proceed
-    // in parallel instead of blocking on the fork's prompt.
+    // Send the prompt immediately (fire-and-forget) so the fork session
+    // receives the large model assignment before OpenCode decides to compact
+    // it. The compacting hook does NOT await this — only fork creation blocks.
+    updateForkStatus(forkedSessionID, "running")
+    setActiveFallbackParams(forkedSessionID, largeModel)
+    context.client.session.prompt({
+      path: { id: forkedSessionID },
+      body: {
+        model: { providerID: largeModel.providerID, modelID: largeModel.modelID },
+        agent,
+        parts: [{ type: "text", text: "Continue the interrupted work from the existing conversation context. If the task still has remaining work, continue it. If the task is complete, report the result without adding unnecessary continuation." }],
+      },
+    }).catch(err => {
+      logger.error("Fork: prompt failed", {
+        forkedSessionID,
+        error: err instanceof Error ? err.message : String(err),
+      })
+      updateForkStatus(forkedSessionID, "failed")
+    })
 
     setTimeout(() => {
       const current = getForkTracking(forkedSessionID)
