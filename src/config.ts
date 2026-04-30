@@ -33,10 +33,12 @@ interface RawConfig {
 
 const DEFAULT_CONFIG: FallbackConfig = {
   enabled: true,
+  defaultFallback: [],
   agentFallbacks: {},
   cooldownMs: 60_000,
   maxRetries: 2,
   logging: false,
+  largeContextFallback: { agents: [], model: "" },
 };
 
 const CONFIG_FILENAME = "fallback.json";
@@ -150,6 +152,7 @@ function writeDefaultConfig(configDir: string): string | null {
         cooldownMs: DEFAULT_CONFIG.cooldownMs,
         maxRetries: DEFAULT_CONFIG.maxRetries,
         logging: DEFAULT_CONFIG.logging,
+        largeContextFallback: DEFAULT_CONFIG.largeContextFallback,
       },
       null,
       2,

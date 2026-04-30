@@ -1,6 +1,6 @@
 import { describe, it, expect, afterEach } from "vitest"
 import { parseModel, getFallbackChain, normalizeAgentName } from "../config"
-import { classifyError, isRateLimitMessage } from "../decision"
+import { classifyError, isTransientErrorMessage, isPermanentRateLimitMessage } from "../decision"
 import {
   activateCooldown,
   incrementBackoff,
@@ -234,22 +234,55 @@ describe("session state - backoff", () => {
   })
 })
 
-describe("isRateLimitMessage", () => {
-  it("matches rate-limit messages", () => {
-    expect(isRateLimitMessage("The usage limit has been reached")).toBe(true)
-    expect(isRateLimitMessage("rate limit exceeded")).toBe(true)
-    expect(isRateLimitMessage("Your credit balance is too low")).toBe(true)
-    expect(isRateLimitMessage("service overloaded, try again")).toBe(true)
+describe("isTransientErrorMessage", () => {
+  it("matches transient rate-limit messages", () => {
+    expect(isTransientErrorMessage("rate limit exceeded")).toBe(true)
+    expect(isTransientErrorMessage("too many requests")).toBe(true)
+    expect(isTransientErrorMessage("service overloaded, try again")).toBe(true)
+    expect(isTransientErrorMessage("capacity exceeded")).toBe(true)
+  })
+
+  it("matches network error messages", () => {
+    expect(isTransientErrorMessage("fetch failed: ECONNREFUSED")).toBe(true)
+    expect(isTransientErrorMessage("ECONNRESET")).toBe(true)
+    expect(isTransientErrorMessage("socket hang up")).toBe(true)
+    expect(isTransientErrorMessage("TypeError: fetch failed")).toBe(true)
+    expect(isTransientErrorMessage("network error")).toBe(true)
+    expect(isTransientErrorMessage("connection refused")).toBe(true)
+    expect(isTransientErrorMessage("ETIMEDOUT")).toBe(true)
   })
 
   it("is case-insensitive", () => {
-    expect(isRateLimitMessage("RATE LIMIT EXCEEDED")).toBe(true)
-    expect(isRateLimitMessage("Usage Limit has been Reached")).toBe(true)
+    expect(isTransientErrorMessage("RATE LIMIT EXCEEDED")).toBe(true)
+    expect(isTransientErrorMessage("Too Many Requests")).toBe(true)
+    expect(isTransientErrorMessage("ECONNREFUSED")).toBe(true)
   })
 
-  it("does not match unrelated messages", () => {
-    expect(isRateLimitMessage("invalid API key")).toBe(false)
-    expect(isRateLimitMessage("model not found")).toBe(false)
-    expect(isRateLimitMessage("connection timeout")).toBe(false)
+  it("does not match permanent or unrelated messages", () => {
+    expect(isTransientErrorMessage("The usage limit has been reached")).toBe(false)
+    expect(isTransientErrorMessage("Your credit balance is too low")).toBe(false)
+    expect(isTransientErrorMessage("invalid API key")).toBe(false)
+    expect(isTransientErrorMessage("model not found")).toBe(false)
+  })
+})
+
+describe("isPermanentRateLimitMessage", () => {
+  it("matches permanent rate-limit messages", () => {
+    expect(isPermanentRateLimitMessage("The usage limit has been reached")).toBe(true)
+    expect(isPermanentRateLimitMessage("quota exceeded for this plan")).toBe(true)
+    expect(isPermanentRateLimitMessage("Your credit balance is too low")).toBe(true)
+    expect(isPermanentRateLimitMessage("billing issue detected")).toBe(true)
+  })
+
+  it("is case-insensitive", () => {
+    expect(isPermanentRateLimitMessage("Usage Limit has been Reached")).toBe(true)
+    expect(isPermanentRateLimitMessage("CREDIT BALANCE")).toBe(true)
+  })
+
+  it("does not match transient or unrelated messages", () => {
+    expect(isPermanentRateLimitMessage("rate limit exceeded")).toBe(false)
+    expect(isPermanentRateLimitMessage("too many requests")).toBe(false)
+    expect(isPermanentRateLimitMessage("invalid API key")).toBe(false)
+    expect(isPermanentRateLimitMessage("connection timeout")).toBe(false)
   })
 })

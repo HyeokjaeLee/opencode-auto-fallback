@@ -1,7 +1,7 @@
 import type { Hooks, PluginInput } from "@opencode-ai/plugin"
 import type { FallbackConfig, FallbackModel } from "./types"
 import { getFallbackChain, loadConfig, normalizeAgentName, parseModel } from "./config"
-import { classifyError, isRateLimitMessage } from "./decision"
+import { classifyError, isTransientErrorMessage, isPermanentRateLimitMessage } from "./decision"
 import { BACKOFF_BASE_MS } from "./constants"
 import { createLogger } from "./log"
 import {
@@ -605,7 +605,23 @@ export async function createPlugin(context: PluginInput): Promise<Hooks> {
         }
 
         if (props.status.type === "retry" && props.status.message) {
-          if (isRateLimitMessage(props.status.message)) {
+          if (isPermanentRateLimitMessage(props.status.message)) {
+            if (isCooldownActive(props.sessionID)) {
+              await logger.info("Permanent rate-limit during cooldown, ignoring", { sessionID: props.sessionID })
+              return
+            }
+
+            await logger.info("Permanent rate-limit detected, falling back immediately", {
+              sessionID: props.sessionID,
+              message: props.status.message,
+            })
+
+            await abortSession(props.sessionID, context)
+            await handleImmediate(props.sessionID, config, logger, context)
+            return
+          }
+
+          if (isTransientErrorMessage(props.status.message)) {
             const attempt = props.status.attempt ?? 1
 
             if (attempt <= config.maxRetries) {
@@ -618,7 +634,7 @@ export async function createPlugin(context: PluginInput): Promise<Hooks> {
               return
             }
 
-            await logger.info("Rate-limit retries exhausted, falling back", {
+            await logger.info("Transient rate-limit retries exhausted, falling back", {
               sessionID: props.sessionID,
               message: props.status.message,
               attempt,
