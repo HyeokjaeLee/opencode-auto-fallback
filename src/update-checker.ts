@@ -1,15 +1,20 @@
 import { spawn } from "node:child_process"
-import { existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs"
+import { existsSync, readFileSync, writeFileSync, mkdirSync, rmSync } from "node:fs"
 import { homedir } from "node:os"
 import { join } from "node:path"
 
 const REGISTRY_URL = "https://registry.npmjs.org/opencode-auto-fallback/latest"
 const PACKAGE_NAME = "opencode-auto-fallback"
+const CACHE_PACKAGES_DIR = join(
+  process.env.XDG_CACHE_HOME ?? join(homedir(), ".cache"),
+  "opencode",
+  "packages",
+)
 const STATE_FILE = join(
   process.env.XDG_DATA_HOME ?? join(homedir(), ".local", "share"),
   "opencode",
   "log",
-  "fallback-update-state.json"
+  "fallback-update-state.json",
 )
 
 export interface UpdateInfo {
@@ -63,54 +68,70 @@ export async function checkForUpdates(currentVersion: string): Promise<UpdateInf
   }
 }
 
-function findInstallDirs(): string[] {
-  const candidates = [
-    join(homedir(), ".cache", "opencode", "packages"),
-    join(homedir(), ".config", "opencode"),
-  ]
-  const dirs: string[] = []
-  for (const dir of candidates) {
-    if (existsSync(join(dir, "node_modules", PACKAGE_NAME))) {
-      dirs.push(dir)
-    }
-  }
-  return dirs
+/**
+ * Find opencode's per-package isolated directory:
+ * ~/.cache/opencode/packages/opencode-auto-fallback@latest/
+ */
+function findIsolatedPackageDir(): string | null {
+  const dir = join(CACHE_PACKAGES_DIR, `${PACKAGE_NAME}@latest`)
+  if (existsSync(join(dir, "package.json"))) return dir
+  return null
 }
 
-function detectPackageManager(dir: string): { bin: string; args: string[] } {
-  if (existsSync(join(dir, "bun.lock"))) return { bin: "bun", args: ["add", `${PACKAGE_NAME}@latest`] }
-  return { bin: "npm", args: ["install", `${PACKAGE_NAME}@latest`] }
+/**
+ * Invalidate the cached package so bun resolves fresh:
+ * 1. Remove node_modules/{package}/
+ * 2. Remove lockfile (package-lock.json or bun.lock)
+ */
+function invalidatePackage(workspaceDir: string): void {
+  const pkgDir = join(workspaceDir, "node_modules", PACKAGE_NAME)
+  if (existsSync(pkgDir)) {
+    rmSync(pkgDir, { recursive: true, force: true })
+  }
+
+  const lockfiles = ["package-lock.json", "bun.lock", "bun.lockb"]
+  for (const lock of lockfiles) {
+    const lockPath = join(workspaceDir, lock)
+    if (existsSync(lockPath)) {
+      rmSync(lockPath, { force: true })
+    }
+  }
+}
+
+/**
+ * Sync the workspace package.json to use "latest" so bun resolves the newest version.
+ */
+function syncPackageJson(workspaceDir: string): void {
+  const pkgJsonPath = join(workspaceDir, "package.json")
+  const content = JSON.parse(readFileSync(pkgJsonPath, "utf-8")) as { dependencies: Record<string, string> }
+  content.dependencies[PACKAGE_NAME] = "latest"
+  writeFileSync(pkgJsonPath, JSON.stringify(content, null, 2) + "\n", "utf-8")
 }
 
 export function tryInstallUpdate(): Promise<boolean> {
   return new Promise((resolve) => {
-    const dirs = findInstallDirs()
-    if (dirs.length === 0) {
+    const workspaceDir = findIsolatedPackageDir()
+    if (!workspaceDir) {
       resolve(false)
       return
     }
 
-    let remaining = dirs.length
-    let anySuccess = false
+    syncPackageJson(workspaceDir)
 
-    for (const installDir of dirs) {
-      const { bin, args } = detectPackageManager(installDir)
-      const proc = spawn(bin, args, {
-        cwd: installDir,
-        stdio: "ignore",
-        timeout: 30_000,
-      })
+    invalidatePackage(workspaceDir)
 
-      proc.on("close", (code) => {
-        if (code === 0) anySuccess = true
-        remaining--
-        if (remaining === 0) resolve(anySuccess)
-      })
+    const proc = spawn("bun", ["install"], {
+      cwd: workspaceDir,
+      stdio: "ignore",
+      timeout: 60_000,
+    })
 
-      proc.on("error", () => {
-        remaining--
-        if (remaining === 0) resolve(anySuccess)
-      })
-    }
+    proc.on("close", (code) => {
+      resolve(code === 0)
+    })
+
+    proc.on("error", () => {
+      resolve(false)
+    })
   })
 }
