@@ -551,6 +551,15 @@ export async function createPlugin(context: PluginInput): Promise<Hooks> {
           if (isRateLimitMessage(props.status.message)) {
             const attempt = props.status.attempt ?? 1
 
+            await logger.info("DEBUG session.status retry", {
+              sessionID: props.sessionID,
+              attempt,
+              rawAttempt: props.status.attempt,
+              message: props.status.message,
+              next: props.status.next,
+              maxRetries: config.maxRetries,
+            })
+
             if (attempt <= config.maxRetries) {
               await logger.info("Allowing opencode retry within maxRetries", {
                 sessionID: props.sessionID,
