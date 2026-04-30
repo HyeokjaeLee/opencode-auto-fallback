@@ -533,6 +533,19 @@ export async function createPlugin(context: PluginInput): Promise<PluginHooks> {
           sessionID: input.sessionID,
           forkedSessionID: forkResult.forkedSessionID,
         })
+        // Dispatch the fork prompt asynchronously so main session compaction
+        // and fork LLM processing run in parallel.
+        const forkedSessionID = forkResult.forkedSessionID
+        if (forkedSessionID) {
+          const trackingEntry = getForkTracking(forkedSessionID)
+          if (trackingEntry) {
+            sendForkPrompt(trackingEntry, context, logger)
+              .catch(err => logger.error("Compacting: async fork prompt failed", {
+                forkedSessionID,
+                error: String(err),
+              }))
+          }
+        }
         return
       }
 
