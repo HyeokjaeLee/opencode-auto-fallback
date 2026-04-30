@@ -670,16 +670,9 @@ export async function createPlugin(context: PluginInput): Promise<PluginHooks> {
           return
         }
 
-        const phase = getLargeContextPhase(props.sessionID)
-        if (phase !== "active" && phase !== "summarizing") {
-          await logger.info("Compacted: not in large context phase, skipping", { sessionID: props.sessionID, phase: phase ?? "none" })
-          return
-        }
-
-        deleteLargeContextPhase(props.sessionID)
-
-        // If there's an active fork, don't re-prompt the original model.
-        // The forked session is already handling the work; main session should wait.
+        // If there's an active fork, inject a waiting notification and skip
+        // model switching. This check comes before the phase check because
+        // session.idle may have already cleared the phase.
         const activeFork = hasActiveFork(props.sessionID)
         if (activeFork) {
           await logger.info("Compacted: active fork in progress, main session waits for fork result", {
@@ -702,6 +695,14 @@ export async function createPlugin(context: PluginInput): Promise<PluginHooks> {
           }
           return
         }
+
+        const phase = getLargeContextPhase(props.sessionID)
+        if (phase !== "active" && phase !== "summarizing") {
+          await logger.info("Compacted: not in large context phase, skipping", { sessionID: props.sessionID, phase: phase ?? "none" })
+          return
+        }
+
+        deleteLargeContextPhase(props.sessionID)
 
         const { extracted } = await fetchSessionData(props.sessionID, context, logger)
         if (!extracted) {
