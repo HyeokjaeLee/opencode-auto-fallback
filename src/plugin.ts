@@ -427,6 +427,7 @@ export async function createPlugin(context: PluginInput): Promise<Hooks> {
       }
     },
     event: async ({ event }) => {
+      await logger.info("event received", { type: event.type, keys: Object.keys(event.properties ?? {}) })
       if (event.type === "session.error") {
         const props = event.properties as {
           sessionID?: string
