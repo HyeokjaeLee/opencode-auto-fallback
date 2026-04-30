@@ -230,6 +230,7 @@ async function handleImmediate(
   }
 
   await abortSession(sessionID, context)
+  largeContextPhase.delete(sessionID)
   const chain = getFallbackChain(config, extracted.info.agent)
   await logger.info(`Immediate fallback chain (${chain.length} models)`, { sessionID })
   if (chain.length === 0) {
@@ -383,43 +384,44 @@ export async function createPlugin(context: PluginInput): Promise<Hooks> {
         return
       }
 
-      if (currentModel?.providerID === original.providerID && currentModel?.modelID === original.modelID) {
-        if (isModelInCooldown(parsed.providerID, parsed.modelID)) {
-          await logger.info("Compacting: large context model in cooldown, falling through to default", {
-            sessionID: input.sessionID, largeModel: lcf.model,
-          })
-          return
-        }
+      const isLargeModel = currentModel?.providerID === parsed.providerID && currentModel?.modelID === parsed.modelID
 
-        await logger.info("Compacting: switching to large context model (no compact)", {
-          sessionID: input.sessionID, agent, largeModel: lcf.model,
-          fromModel: `${original.providerID}/${original.modelID}`,
+      if (isLargeModel) {
+        await logger.info("Compacting: already using large model, skipping", {
+          sessionID: input.sessionID, largeModel: `${parsed.providerID}/${parsed.modelID}`,
         })
-        await abortSession(input.sessionID, context)
-        largeContextPhase.set(input.sessionID, "active")
-        const ok = await revertAndPrompt(
-          input.sessionID, agent, extracted.parts, extracted.info.id,
-          { providerID: parsed.providerID, modelID: parsed.modelID },
-          logger, context,
-        )
-        if (!ok) {
-          largeContextPhase.delete(input.sessionID)
-          await logger.error("Compacting: failed to switch to large context model", { sessionID: input.sessionID, largeModel: lcf.model })
-          return
-        }
-        await showToastSafely(context, {
-          title: "Large Context Model",
-          message: `Switched to ${lcf.model} for large context`,
-          variant: "info",
-          duration: 5000,
-        }, logger)
-      } else {
-        await logger.info("Compacting: model already switched, skipping", {
-          sessionID: input.sessionID,
-          original: `${original.providerID}/${original.modelID}`,
-          current: currentModel ? `${currentModel.providerID}/${currentModel.modelID}` : "unknown",
-        })
+        return
       }
+
+      if (isModelInCooldown(parsed.providerID, parsed.modelID)) {
+        await logger.info("Compacting: large context model in cooldown, falling through to default", {
+          sessionID: input.sessionID, largeModel: lcf.model,
+        })
+        return
+      }
+
+      await logger.info("Compacting: switching to large context model (no compact)", {
+        sessionID: input.sessionID, agent, largeModel: lcf.model,
+        fromModel: currentModel ? `${currentModel.providerID}/${currentModel.modelID}` : "unknown",
+      })
+      await abortSession(input.sessionID, context)
+      largeContextPhase.set(input.sessionID, "active")
+      const ok = await revertAndPrompt(
+        input.sessionID, agent, extracted.parts, extracted.info.id,
+        { providerID: parsed.providerID, modelID: parsed.modelID },
+        logger, context,
+      )
+      if (!ok) {
+        largeContextPhase.delete(input.sessionID)
+        await logger.error("Compacting: failed to switch to large context model", { sessionID: input.sessionID, largeModel: lcf.model })
+        return
+      }
+      await showToastSafely(context, {
+        title: "Large Context Model",
+        message: `Switched to ${lcf.model} for large context`,
+        variant: "info",
+        duration: 5000,
+      }, logger)
     },
     event: async ({ event }) => {
       if (event.type === "session.error") {
