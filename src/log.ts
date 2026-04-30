@@ -1,4 +1,4 @@
-import { appendFile, mkdir } from "node:fs/promises"
+import { appendFile, mkdir, readFile, writeFile } from "node:fs/promises"
 import { join } from "node:path"
 import { homedir } from "node:os"
 
@@ -8,6 +8,7 @@ const LOG_DIR = join(
   "log"
 )
 const LOG_FILE = join(LOG_DIR, "fallback.log")
+const MAX_LINES = 500
 
 type Level = "INFO" | "WARN" | "ERROR"
 
@@ -23,6 +24,16 @@ function ensureDir(): Promise<void> {
   return dirPromise
 }
 
+async function trimLogFile(): Promise<void> {
+  try {
+    const content = await readFile(LOG_FILE, "utf-8")
+    const lines = content.split("\n").filter(Boolean)
+    if (lines.length <= MAX_LINES) return
+    const trimmed = lines.slice(-MAX_LINES).join("\n") + "\n"
+    await writeFile(LOG_FILE, trimmed, "utf-8")
+  } catch {}
+}
+
 export async function log(
   level: Level,
   message: string,
@@ -33,6 +44,7 @@ export async function log(
   const extraStr = extra ? " " + JSON.stringify(extra) : ""
   const line = `${timestamp} [${level}] ${message}${extraStr}\n`
   await appendFile(LOG_FILE, line).catch(() => {})
+  await trimLogFile()
 }
 
 export function createLogger(enabled: boolean) {
