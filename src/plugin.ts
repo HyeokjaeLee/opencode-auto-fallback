@@ -1,4 +1,12 @@
 import type { Hooks, PluginInput } from "@opencode-ai/plugin"
+
+// Extended hooks type for runtime-only hooks not in the SDK types
+type PluginHooks = Hooks & {
+  "experimental.compaction.autocontinue"?: (
+    input: { sessionID: string; agent: string; model?: { providerID: string; modelID: string } },
+    output: { enabled: boolean },
+  ) => Promise<void>
+}
 import type { FallbackConfig, FallbackModel, ToastOptions } from "./types"
 import { getFallbackChain, loadConfig, normalizeAgentName, parseModel } from "./config"
 import { classifyError, isTransientErrorMessage, isPermanentRateLimitMessage } from "./decision"
@@ -274,7 +282,7 @@ async function handleImmediate(
   await tryFallbackChain(sessionID, chain, extracted.info.agent, extracted.parts, extracted.info.id, logger, context)
 }
 
-export async function createPlugin(context: PluginInput): Promise<Hooks> {
+export async function createPlugin(context: PluginInput): Promise<PluginHooks> {
   const config = loadConfig()
   const logger = createLogger(config.logging)
 
@@ -519,6 +527,17 @@ export async function createPlugin(context: PluginInput): Promise<Hooks> {
       await logger.warn("Compacting: fork failed, letting normal compaction proceed", {
         sessionID: input.sessionID, error: forkResult.error,
       })
+    },
+    "experimental.compaction.autocontinue": async (
+      input: { sessionID: string; agent: string },
+      output: { enabled: boolean },
+    ) => {
+      if (hasActiveFork(input.sessionID)) {
+        output.enabled = false
+        await logger.info("Autocontinue: suppressed (active fork in progress)", {
+          sessionID: input.sessionID,
+        })
+      }
     },
     event: async ({ event }) => {
       if (event.type === "session.error") {
