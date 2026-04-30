@@ -18,7 +18,10 @@ import { version as currentVersion } from "../package.json"
 import { extractUserParts } from "./message"
 
 const activeFallbackParams = new Map<string, FallbackModel>()
+
+type LargeContextPhase = "active" | "summarizing"
 const largeContextSessions = new Map<string, { providerID: string; modelID: string }>()
+const largeContextPhase = new Map<string, LargeContextPhase>()
 
 function isLargeContextAgent(agent: string | undefined, agents: string[]): boolean {
   if (!agent) return false
@@ -290,8 +293,15 @@ export async function createPlugin(context: PluginInput): Promise<Hooks> {
         (input as any).experimental = {}
       }
       input.experimental!.chatMaxRetries = 0
+      // SSE-level retry happens below chat-level and ignores chatMaxRetries.
+      // Set sseMaxRetryAttempts to 0 so the SSE client breaks after the first non-200 response,
+      // allowing our plugin's session.error handler to take over the fallback logic.
+      if ((input.experimental as any).sseMaxRetryAttempts === undefined) {
+        (input.experimental as any).sseMaxRetryAttempts = 0
+      }
       await logger.info("Disabled opencode built-in retry", {
         chatMaxRetries: input.experimental!.chatMaxRetries,
+        sseMaxRetryAttempts: (input.experimental as any).sseMaxRetryAttempts,
         experimentalKeys: Object.keys(input.experimental ?? {}),
       })
     },
@@ -384,15 +394,14 @@ export async function createPlugin(context: PluginInput): Promise<Hooks> {
         return
       }
 
-      const { extracted, currentModel, messages } = await fetchSessionData(input.sessionID, context, logger)
-      if (!extracted) {
-        await logger.info("Compacting: no extracted user message", { sessionID: input.sessionID })
+      if (largeContextPhase.get(input.sessionID) === "summarizing") {
+        await logger.info("Compacting: summarizing phase, letting compaction proceed", { sessionID: input.sessionID })
         return
       }
 
-      const lastRole = messages?.[messages.length - 1]?.info?.role
-      if (lastRole === "user") {
-        await logger.info("Compacting: last message is user, skipping", { sessionID: input.sessionID, lastRole })
+      const { extracted, currentModel, messages } = await fetchSessionData(input.sessionID, context, logger)
+      if (!extracted) {
+        await logger.info("Compacting: no extracted user message", { sessionID: input.sessionID })
         return
       }
 
@@ -402,8 +411,16 @@ export async function createPlugin(context: PluginInput): Promise<Hooks> {
         return
       }
 
+      const parsed = parseModel(lcf.model)
+
+      if (largeContextPhase.get(input.sessionID) === "active") {
+        await logger.info("Compacting: large model context full, letting compaction proceed", {
+          sessionID: input.sessionID, largeModel: `${parsed.providerID}/${parsed.modelID}`,
+        })
+        return
+      }
+
       if (currentModel?.providerID === original.providerID && currentModel?.modelID === original.modelID) {
-        const parsed = parseModel(lcf.model)
         if (isModelInCooldown(parsed.providerID, parsed.modelID)) {
           await logger.info("Compacting: large context model in cooldown, falling through to default", {
             sessionID: input.sessionID, largeModel: lcf.model,
@@ -411,17 +428,19 @@ export async function createPlugin(context: PluginInput): Promise<Hooks> {
           return
         }
 
-        await logger.info("Compacting: switching to large context model", {
+        await logger.info("Compacting: switching to large context model (no compact)", {
           sessionID: input.sessionID, agent, largeModel: lcf.model,
           fromModel: `${original.providerID}/${original.modelID}`,
         })
         await abortSession(input.sessionID, context)
+        largeContextPhase.set(input.sessionID, "active")
         const ok = await revertAndPrompt(
           input.sessionID, agent, extracted.parts, extracted.info.id,
           { providerID: parsed.providerID, modelID: parsed.modelID },
           logger, context,
         )
         if (!ok) {
+          largeContextPhase.delete(input.sessionID)
           await logger.error("Compacting: failed to switch to large context model", { sessionID: input.sessionID, largeModel: lcf.model })
           return
         }
@@ -517,6 +536,12 @@ export async function createPlugin(context: PluginInput): Promise<Hooks> {
           return
         }
 
+        const phase = largeContextPhase.get(props.sessionID)
+        if (phase !== "active" && phase !== "summarizing") {
+          await logger.info("Compacted: not in large context phase, skipping", { sessionID: props.sessionID, phase: phase ?? "none" })
+          return
+        }
+
         const { extracted } = await fetchSessionData(props.sessionID, context, logger)
         if (!extracted) {
           await logger.info("Compacted: no extracted user message", { sessionID: props.sessionID })
@@ -532,6 +557,7 @@ export async function createPlugin(context: PluginInput): Promise<Hooks> {
         await logger.info("Compacted: switching back to original model", {
           sessionID: props.sessionID, original,
         })
+        largeContextPhase.delete(props.sessionID)
         const ok = await revertAndPrompt(
           props.sessionID, extracted.info.agent, extracted.parts, extracted.info.id,
           original, logger, context,
@@ -547,6 +573,30 @@ export async function createPlugin(context: PluginInput): Promise<Hooks> {
           duration: 5000,
         }, logger)
       }
+      if (event.type === "session.idle") {
+        const props = event.properties as { sessionID: string }
+        const phase = largeContextPhase.get(props.sessionID)
+        const lcf = config.largeContextFallback
+        if (phase === "active" && lcf) {
+          const parsed = parseModel(lcf.model)
+          await logger.info("Idle: large model finished, triggering summarize for compact", {
+            sessionID: props.sessionID,
+          })
+          largeContextPhase.set(props.sessionID, "summarizing")
+          try {
+            await context.client.session.summarize({
+              path: { id: props.sessionID },
+              body: { providerID: parsed.providerID, modelID: parsed.modelID },
+            })
+          } catch (err) {
+            await logger.warn("Idle: failed to trigger summarize", {
+              sessionID: props.sessionID,
+              error: err instanceof Error ? err.message : String(err),
+            })
+            largeContextPhase.delete(props.sessionID)
+          }
+        }
+      }
       if (event.type === "session.status") {
         const props = event.properties as { sessionID: string; status: { type: string } }
         if (props.status.type === "idle" && resetIfExpired(props.sessionID)) {
@@ -559,6 +609,7 @@ export async function createPlugin(context: PluginInput): Promise<Hooks> {
         if (props.info?.id) {
           removeSession(props.info.id)
           largeContextSessions.delete(props.info.id)
+          largeContextPhase.delete(props.info.id)
           await logger.info("Session cleaned up", { sessionID: props.info.id })
         }
       }
@@ -573,4 +624,5 @@ export const _forTesting = {
   showToastSafely,
   revertAndPrompt,
   isLargeContextAgent,
+  largeContextPhase,
 }
