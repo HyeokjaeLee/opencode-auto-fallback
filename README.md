@@ -50,14 +50,14 @@ On first run, a default config is auto-created at `~/.config/opencode/fallback.j
 }
 ```
 
-| Field             | Default              | Description                                                              |
-| ----------------- | -------------------- | ------------------------------------------------------------------------ |
-| `enabled`         | `true`               | Enable/disable the plugin                                                |
-| `defaultFallback` | _(none)_             | Fallback model chain when agent has no specific override. **Optional** — when omitted, only agents listed in `agentFallbacks` will trigger fallback |
-| `agentFallbacks`  | `{}`                 | Per-agent fallback chains (`"agentName": ["model", ...]`)                |
-| `cooldownMs`      | `60000`              | Cooldown after immediate fallback (prevents rapid re-triggering)         |
-| `maxRetries`      | `2`                  | Backoff retry attempts before switching to fallback chain                |
-| `logging`         | `false`              | Enable file-based logging to `~/.local/share/opencode/log/fallback.log` |
+| Field             | Default  | Description                                                                                                                                         |
+| ----------------- | -------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `enabled`         | `true`   | Enable/disable the plugin                                                                                                                           |
+| `defaultFallback` | _(none)_ | Fallback model chain when agent has no specific override. **Optional** — when omitted, only agents listed in `agentFallbacks` will trigger fallback |
+| `agentFallbacks`  | `{}`     | Per-agent fallback chains (`"agentName": ["model", ...]`)                                                                                           |
+| `cooldownMs`      | `60000`  | Cooldown after immediate fallback (prevents rapid re-triggering)                                                                                    |
+| `maxRetries`      | `2`      | Backoff retry attempts before switching to fallback chain                                                                                           |
+| `logging`         | `false`  | Enable file-based logging to `~/.local/share/opencode/log/fallback.log`                                                                             |
 
 ### Auto Updates
 
@@ -77,17 +77,18 @@ When an agent's context window fills up mid-task, automatically switch to a larg
 {
   "largeContextFallback": {
     "agents": ["sisyphus", "explore"],
-    "model": "openai/gpt-5.5"
-  }
+    "model": "openai/gpt-5.5",
+  },
 }
 ```
 
-| Field | Description |
-|-------|-------------|
+| Field    | Description                                   |
+| -------- | --------------------------------------------- |
 | `agents` | List of agent names to apply this behavior to |
-| `model` | Model to switch to when context fills up |
+| `model`  | Model to switch to when context fills up      |
 
 **Flow:**
+
 ```
 original model working → context full (auto compact) → switch to large model
     → large model finishes task → idle → large model compacts
@@ -120,12 +121,12 @@ Each entry in a fallback chain can be a simple string or an object:
 
 The plugin detects errors through SDK's `RetryPart` (type: `"retry"`) in `output.parts`, which provides structured `statusCode` and `isRetryable` flags — no text pattern matching.
 
-| Error type                  | Detection                                      | Action                                      |
-| --------------------------- | ---------------------------------------------- | ------------------------------------------- |
-| **HTTP 401/402/403** (auth) | Status code in `IMMEDIATE_STATUS_CODES`        | Immediate fallback                          |
-| **Retryable errors**        | `isRetryable === true` from SDK                | Backoff retry (2s → 4s → 8s…) then fallback |
-| **HTTP 429/5xx**            | Status code in `RETRYABLE_STATUS_CODES`        | Backoff retry then fallback                 |
-| **Unknown errors**          | Default classification                         | Backoff retry then fallback _(safety net)_  |
+| Error type                  | Detection                               | Action                                      |
+| --------------------------- | --------------------------------------- | ------------------------------------------- |
+| **HTTP 401/402/403** (auth) | Status code in `IMMEDIATE_STATUS_CODES` | Immediate fallback                          |
+| **Retryable errors**        | `isRetryable === true` from SDK         | Backoff retry (2s → 4s → 8s…) then fallback |
+| **HTTP 429/5xx**            | Status code in `RETRYABLE_STATUS_CODES` | Backoff retry then fallback                 |
+| **Unknown errors**          | Default classification                  | Backoff retry then fallback _(safety net)_  |
 
 ### Retry Flow
 

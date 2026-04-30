@@ -309,10 +309,22 @@ export async function createPlugin(context: PluginInput): Promise<Hooks> {
           providerID: input.model.providerID,
           modelID: input.model.id,
         })
+        await logger.info("Tracked original model for session", {
+          sessionID: input.sessionID,
+          model: `${input.model.providerID}/${input.model.id}`,
+        })
       }
 
       const fallback = getAndClearFallbackParams(input.sessionID)
       if (!fallback) return
+      await logger.info("Applying fallback model params", {
+        sessionID: input.sessionID,
+        model: `${fallback.providerID}/${fallback.modelID}`,
+        temperature: fallback.temperature,
+        topP: fallback.topP,
+        reasoningEffort: fallback.reasoningEffort,
+        maxTokens: fallback.maxTokens,
+      })
       if (fallback.temperature !== undefined) output.temperature = fallback.temperature
       if (fallback.topP !== undefined) output.topP = fallback.topP
       if (fallback.reasoningEffort !== undefined) {
@@ -368,46 +380,71 @@ export async function createPlugin(context: PluginInput): Promise<Hooks> {
 
         await logger.info("Compacting: switching to large context model", {
           sessionID: input.sessionID, agent, largeModel: lcf.model,
+          fromModel: `${original.providerID}/${original.modelID}`,
         })
         await abortSession(input.sessionID, context)
-        await revertAndPrompt(
+        const ok = await revertAndPrompt(
           input.sessionID, agent, extracted.parts, extracted.info.id,
           { providerID: parsed.providerID, modelID: parsed.modelID },
           logger, context,
         )
+        if (!ok) {
+          await logger.error("Compacting: failed to switch to large context model", { sessionID: input.sessionID, largeModel: lcf.model })
+          return
+        }
         await showToastSafely(context, {
           title: "Large Context Model",
           message: `Switched to ${lcf.model} for large context`,
           variant: "info",
           duration: 5000,
         }, logger)
+      } else {
+        await logger.info("Compacting: model already switched, skipping", {
+          sessionID: input.sessionID,
+          original: `${original.providerID}/${original.modelID}`,
+          current: currentModel ? `${currentModel.providerID}/${currentModel.modelID}` : "unknown",
+        })
       }
     },
     event: async ({ event }) => {
-      if ((event as any).type?.startsWith?.("session")) {
-        await logger.info("Session event received", { eventType: event.type, eventProps: JSON.stringify(event.properties).slice(0, 300) })
-      }
       if (event.type === "session.compacted") {
         const props = event.properties as { sessionID: string }
+        await logger.info("Compacted event received", { sessionID: props.sessionID })
         const lcf = config.largeContextFallback
-        if (!lcf) return
+        if (!lcf) {
+          await logger.info("Compacted: no largeContextFallback config, skipping", { sessionID: props.sessionID })
+          return
+        }
 
         const original = largeContextSessions.get(props.sessionID)
-        if (!original) return
+        if (!original) {
+          await logger.info("Compacted: no original model tracked for session", { sessionID: props.sessionID })
+          return
+        }
 
         const { extracted } = await fetchSessionData(props.sessionID, context)
-        if (!extracted) return
+        if (!extracted) {
+          await logger.info("Compacted: no extracted user message", { sessionID: props.sessionID })
+          return
+        }
 
-        if (!extracted.info.agent || !lcf.agents.includes(extracted.info.agent)) return
+        const agent = extracted.info.agent
+        if (!agent || !lcf.agents.includes(agent)) {
+          await logger.info("Compacted: agent not in largeContextFallback.agents", { sessionID: props.sessionID, agent, agents: lcf.agents })
+          return
+        }
 
         await logger.info("Compacted: switching back to original model", {
           sessionID: props.sessionID, original,
         })
-        await abortSession(props.sessionID, context)
-        await revertAndPrompt(
+        const ok = await revertAndPrompt(
           props.sessionID, extracted.info.agent, extracted.parts, extracted.info.id,
           original, logger, context,
         )
+        if (!ok) {
+          await logger.error("Compacted: failed to switch back to original model", { sessionID: props.sessionID, original })
+          return
+        }
         await showToastSafely(context, {
           title: "Original Model Restored",
           message: `Switched back to ${original.providerID}/${original.modelID}`,
