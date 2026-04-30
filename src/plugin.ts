@@ -426,33 +426,17 @@ export async function createPlugin(context: PluginInput): Promise<PluginHooks> {
         return
       }
 
-      const { extracted, currentModel } = await fetchSessionData(input.sessionID, context, logger)
-      if (!extracted) {
-        await logger.info("Compacting: no extracted user message", { sessionID: input.sessionID })
-        return
-      }
-
-      // Use the originally tracked agent if available, falling back to extracted info
-      // (extracted.info.agent may point to a synthetic "Continue" message with wrong agent)
-      const agent = getSessionOriginalAgent(input.sessionID) ?? extracted.info.agent
-      if (!agent) {
-        await logger.info("Compacting: no agent found for session", { sessionID: input.sessionID })
-        return
-      }
-      if (!isLargeContextAgent(agent, lcf.agents)) {
-        await logger.info("Compacting: agent not in largeContextFallback.agents", { sessionID: input.sessionID, agent, agents: lcf.agents })
-        return
-      }
-
-      const parsed = parseModel(lcf.model)
+      // ---- Fast path: local checks before any API call ----
 
       if (getLargeContextPhase(input.sessionID) === "active") {
         await logger.info("Compacting: large model context full, letting compaction proceed", {
-          sessionID: input.sessionID, largeModel: `${parsed.providerID}/${parsed.modelID}`,
+          sessionID: input.sessionID,
         })
         return
       }
 
+      const parsed = parseModel(lcf.model)
+      const currentModel = getCurrentModel(input.sessionID)
       const isLargeModel = currentModel?.providerID === parsed.providerID && currentModel?.modelID === parsed.modelID
 
       if (isLargeModel) {
@@ -465,6 +449,13 @@ export async function createPlugin(context: PluginInput): Promise<PluginHooks> {
       if (isModelInCooldown(parsed.providerID, parsed.modelID)) {
         await logger.info("Compacting: large context model in cooldown, falling through to default", {
           sessionID: input.sessionID, largeModel: lcf.model,
+        })
+        return
+      }
+
+      if (hasActiveFork(input.sessionID)) {
+        await logger.info("Compacting: active fork exists, skipping", {
+          sessionID: input.sessionID,
         })
         return
       }
@@ -485,19 +476,31 @@ export async function createPlugin(context: PluginInput): Promise<PluginHooks> {
         return
       }
 
+      // ---- API call — only when all fast-path checks pass ----
+
+      const { extracted } = await fetchSessionData(input.sessionID, context, logger)
+      if (!extracted) {
+        await logger.info("Compacting: no extracted user message", { sessionID: input.sessionID })
+        return
+      }
+
+      // Use the originally tracked agent if available, falling back to extracted info
+      // (extracted.info.agent may point to a synthetic "Continue" message with wrong agent)
+      const agent = getSessionOriginalAgent(input.sessionID) ?? extracted.info.agent
+      if (!agent) {
+        await logger.info("Compacting: no agent found for session", { sessionID: input.sessionID })
+        return
+      }
+      if (!isLargeContextAgent(agent, lcf.agents)) {
+        await logger.info("Compacting: agent not in largeContextFallback.agents", { sessionID: input.sessionID, agent, agents: lcf.agents })
+        return
+      }
+
       await logger.info("Compacting: switching to large context model via fork", {
         sessionID: input.sessionID, agent, largeModel: lcf.model,
         fromModel: currentModel ? `${currentModel.providerID}/${currentModel.modelID}` : "unknown",
       })
-      if (agent) setSessionOriginalAgent(input.sessionID, agent)
-
-      // Check if there's already an active fork for this session
-      if (hasActiveFork(input.sessionID)) {
-        await logger.info("Compacting: active fork exists, skipping", {
-          sessionID: input.sessionID,
-        })
-        return
-      }
+      setSessionOriginalAgent(input.sessionID, agent)
 
       // Capture the last user request text to provide context when injecting fork result
       const lastRequest = extracted.parts
