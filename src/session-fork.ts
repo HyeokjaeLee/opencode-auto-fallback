@@ -6,6 +6,7 @@ import {
   getForkTracking,
   updateForkStatus,
   setActiveFallbackParams,
+  getOrSetOriginalModel,
 } from "./state/context-state"
 import { createLogger } from "./log"
 
@@ -43,6 +44,11 @@ export async function forkSessionForLargeContext(
       lastRequest,
     }
     setForkTracking(trackingEntry)
+    // Set the fork session's tracked model to the large model so that if
+    // OpenCode triggers compaction on the fork, our compacting hook sees
+    // the large model's context window and skips compaction (the large
+    // model has enough room for the inherited context).
+    getOrSetOriginalModel(forkedSessionID, largeModel.providerID, largeModel.modelID)
     await logger.info("Fork: session forked successfully", {
       sessionID,
       forkedSessionID,
