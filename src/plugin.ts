@@ -23,6 +23,7 @@ const activeFallbackParams = new Map<string, FallbackModel>()
 type LargeContextPhase = "active" | "summarizing"
 const largeContextSessions = new Map<string, { providerID: string; modelID: string }>()
 const currentModelSessions = new Map<string, { providerID: string; modelID: string }>()
+const sessionCooldownModel = new Map<string, { providerID: string; modelID: string }>()
 const largeContextPhase = new Map<string, LargeContextPhase>()
 
 function isLargeContextAgent(agent: string | undefined, agents: string[]): boolean {
@@ -212,6 +213,7 @@ async function handleImmediate(
   const { extracted, currentModel } = await fetchSessionData(sessionID, context, logger, hookInput)
 
   if (currentModel) {
+    sessionCooldownModel.set(sessionID, { providerID: currentModel.providerID, modelID: currentModel.modelID })
     markModelCooldown(currentModel.providerID, currentModel.modelID, config.cooldownMs)
     await showToastSafely(context, {
       title: "Model Error",
@@ -299,6 +301,7 @@ export async function createPlugin(context: PluginInput): Promise<Hooks> {
 
         if (changed) {
           deactivateCooldown(input.sessionID)
+          sessionCooldownModel.delete(input.sessionID)
           await logger.info("Model changed, cooldown reset", {
             sessionID: input.sessionID,
             model: `${input.model.providerID}/${input.model.id}`,
@@ -444,13 +447,12 @@ export async function createPlugin(context: PluginInput): Promise<Hooks> {
           return
         }
 
-        // ProviderAuthError & model-not-found errors have no statusCode/isRetryable — treat as immediate
         const isAuthError = err.name === "ProviderAuthError"
-        const isModelNotFound =
+        const isModelNotFoundError =
           err.name === "ProviderModelNotFoundError" ||
           err.data.message?.includes("Model not found")
         const statusCode: number | undefined = err.data.statusCode
-        const isRetryable: boolean | undefined = (isAuthError || isModelNotFound) ? false : err.data.isRetryable
+        const isRetryable: boolean | undefined = (isAuthError || isModelNotFoundError) ? false : err.data.isRetryable
 
         await logger.info("session.error detected", {
           sessionID,
@@ -460,7 +462,26 @@ export async function createPlugin(context: PluginInput): Promise<Hooks> {
           message: err.data.message,
         })
 
-        const decision = classifyError(statusCode, isRetryable, isCooldownActive(sessionID))
+        // Model-aware cooldown: allow through if the current model differs from the one that triggered cooldown
+        const cooldownActive = isCooldownActive(sessionID)
+        if (cooldownActive) {
+          const currentModel = currentModelSessions.get(sessionID)
+          const cooldownModel = sessionCooldownModel.get(sessionID)
+          if (currentModel && cooldownModel &&
+              (currentModel.providerID !== cooldownModel.providerID ||
+               currentModel.modelID !== cooldownModel.modelID)) {
+            await logger.info("Model changed during cooldown, allowing error through", {
+              sessionID,
+              currentModel,
+              cooldownModel,
+            })
+          } else {
+            await logger.info("session.error during cooldown, ignoring", { sessionID })
+            return
+          }
+        }
+
+        const decision = classifyError(statusCode, isRetryable, false)
 
         if (decision.action === "immediate") {
           await logger.info("Immediate error via session.error", {
@@ -612,6 +633,7 @@ export async function createPlugin(context: PluginInput): Promise<Hooks> {
           removeSession(props.info.id)
           largeContextSessions.delete(props.info.id)
           currentModelSessions.delete(props.info.id)
+          sessionCooldownModel.delete(props.info.id)
           largeContextPhase.delete(props.info.id)
           await logger.info("Session cleaned up", { sessionID: props.info.id })
         }
