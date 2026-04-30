@@ -16,6 +16,7 @@ import {
   REVERT_DELAY_MS,
   TOAST_DURATION_MS,
   TOAST_DURATION_LONG_MS,
+  WAITING_TOAST_DURATION_MS,
 } from "./constants"
 import { createLogger } from "./log"
 import {
@@ -54,8 +55,8 @@ import {
   getSessionOriginalAgent,
   hasActiveFork,
   getForkTracking,
-  getForkByMainSession,
 } from "./state/context-state"
+
 import { forkSessionForLargeContext, sendForkPrompt, injectForkResult } from "./session-fork"
 
 // tui is available at runtime but not typed in the SDK
@@ -678,21 +679,12 @@ export async function createPlugin(context: PluginInput): Promise<PluginHooks> {
           await logger.info("Compacted: active fork in progress, main session waits for fork result", {
             sessionID: props.sessionID,
           })
-          // Inject a waiting notification so the user sees their request is being processed.
-          const forkEntry = getForkByMainSession(props.sessionID)
-          if (forkEntry) {
-            await context.client.session.prompt({
-              path: { id: props.sessionID },
-              body: {
-                agent: forkEntry.agent,
-                parts: [{ type: "text", text: "Processing your last request with extended context... The session will resume automatically once it's complete." }],
-              },
-            })
-            await context.client.session.abort({ path: { id: props.sessionID } })
-            await logger.info("Compacted: waiting notification injected, main session aborted", {
-              sessionID: props.sessionID,
-            })
-          }
+          await showToastSafely(context, {
+            title: "Processing with Extended Context",
+            message: "A sub-agent is handling your last request with extended context. The session will resume automatically once it's complete.",
+            variant: "info",
+            duration: WAITING_TOAST_DURATION_MS,
+          }, logger)
           return
         }
 

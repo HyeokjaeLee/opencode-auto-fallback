@@ -36,6 +36,7 @@ export const REVERT_DELAY_MS = 500
 
 /** Duration for toast notifications (ms) */
 export const TOAST_DURATION_MS = 5_000
+export const WAITING_TOAST_DURATION_MS = 15_000
 
 /** Duration for long/important toast notifications (ms) */
 export const TOAST_DURATION_LONG_MS = 8_000
