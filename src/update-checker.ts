@@ -63,18 +63,19 @@ export async function checkForUpdates(currentVersion: string): Promise<UpdateInf
   }
 }
 
-function findInstallDir(): string | null {
+function findInstallDirs(): string[] {
   const candidates = [
     join(homedir(), ".bun", "install", "global"),
     join(homedir(), ".cache", "opencode", "packages"),
     join(homedir(), ".config", "opencode"),
   ]
+  const dirs: string[] = []
   for (const dir of candidates) {
     if (existsSync(join(dir, "node_modules", PACKAGE_NAME))) {
-      return dir
+      dirs.push(dir)
     }
   }
-  return null
+  return dirs
 }
 
 function detectPackageManager(dir: string): { bin: string; args: string[] } {
@@ -84,26 +85,33 @@ function detectPackageManager(dir: string): { bin: string; args: string[] } {
 
 export function tryInstallUpdate(): Promise<boolean> {
   return new Promise((resolve) => {
-    const installDir = findInstallDir()
-    if (!installDir) {
+    const dirs = findInstallDirs()
+    if (dirs.length === 0) {
       resolve(false)
       return
     }
 
-    const { bin, args } = detectPackageManager(installDir)
+    let remaining = dirs.length
+    let anySuccess = false
 
-    const proc = spawn(bin, args, {
-      cwd: installDir,
-      stdio: "ignore",
-      timeout: 30_000,
-    })
+    for (const installDir of dirs) {
+      const { bin, args } = detectPackageManager(installDir)
+      const proc = spawn(bin, args, {
+        cwd: installDir,
+        stdio: "ignore",
+        timeout: 30_000,
+      })
 
-    proc.on("close", (code) => {
-      resolve(code === 0)
-    })
+      proc.on("close", (code) => {
+        if (code === 0) anySuccess = true
+        remaining--
+        if (remaining === 0) resolve(anySuccess)
+      })
 
-    proc.on("error", () => {
-      resolve(false)
-    })
+      proc.on("error", () => {
+        remaining--
+        if (remaining === 0) resolve(anySuccess)
+      })
+    }
   })
 }
