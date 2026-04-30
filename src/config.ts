@@ -86,6 +86,10 @@ export function parseModel(model: ModelReference): ResolvedModel {
   };
 }
 
+export function normalizeAgentName(agent: string): string {
+  return agent.replace(/[\s\u200B-\u200D\uFEFF]/g, "").toLowerCase()
+}
+
 function normalizeFallbackEntry(entry: string | FallbackEntry): FallbackModel {
   if (typeof entry === "string") {
     const parsed = parseModel(entry)
@@ -188,8 +192,9 @@ export function getFallbackChain(
   config: FallbackConfig,
   agent: string | undefined,
 ): FallbackModel[] {
-  const raw = agent && config.agentFallbacks[agent]
-    ? config.agentFallbacks[agent]
+  const fallbackAgent = getFallbackAgent(config.agentFallbacks, agent)
+  const raw = fallbackAgent
+    ? config.agentFallbacks[fallbackAgent]
     : config.defaultFallback
 
   if (!raw) return []
@@ -208,4 +213,15 @@ export function getFallbackChain(
   }
 
   return models
+}
+
+function getFallbackAgent(
+  agentFallbacks: AgentFallbackMap,
+  agent: string | undefined,
+): string | undefined {
+  if (!agent) return undefined
+  const normalizedAgent = normalizeAgentName(agent)
+  return Object.keys(agentFallbacks).find(
+    configuredAgent => normalizeAgentName(configuredAgent) === normalizedAgent,
+  )
 }

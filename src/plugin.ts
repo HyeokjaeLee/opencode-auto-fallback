@@ -1,6 +1,6 @@
 import type { Hooks, PluginInput } from "@opencode-ai/plugin"
 import type { FallbackConfig, FallbackModel } from "./types"
-import { getFallbackChain, loadConfig, parseModel } from "./config"
+import { getFallbackChain, loadConfig, normalizeAgentName, parseModel } from "./config"
 import { classifyError } from "./decision"
 import { BACKOFF_BASE_MS } from "./constants"
 import { createLogger } from "./log"
@@ -19,6 +19,12 @@ import { extractUserParts } from "./message"
 
 const activeFallbackParams = new Map<string, FallbackModel>()
 const largeContextSessions = new Map<string, { providerID: string; modelID: string }>()
+
+function isLargeContextAgent(agent: string | undefined, agents: string[]): boolean {
+  if (!agent) return false
+  const normalizedAgent = normalizeAgentName(agent)
+  return agents.some(configuredAgent => normalizeAgentName(configuredAgent) === normalizedAgent)
+}
 
 function setActiveFallbackParams(sessionID: string, model: FallbackModel): void {
   activeFallbackParams.set(sessionID, model)
@@ -384,7 +390,7 @@ export async function createPlugin(context: PluginInput): Promise<Hooks> {
       }
 
       const agent = extracted.info.agent
-      if (!agent || !lcf.agents.includes(agent)) {
+      if (!isLargeContextAgent(agent, lcf.agents)) {
         await logger.info("Compacting: agent not in largeContextFallback.agents", { sessionID: input.sessionID, agent, agents: lcf.agents })
         return
       }
@@ -508,7 +514,7 @@ export async function createPlugin(context: PluginInput): Promise<Hooks> {
         }
 
         const agent = extracted.info.agent
-        if (!agent || !lcf.agents.includes(agent)) {
+        if (!isLargeContextAgent(agent, lcf.agents)) {
           await logger.info("Compacted: agent not in largeContextFallback.agents", { sessionID: props.sessionID, agent, agents: lcf.agents })
           return
         }
@@ -556,4 +562,5 @@ export const _forTesting = {
   tryFallbackChain,
   showToastSafely,
   revertAndPrompt,
+  isLargeContextAgent,
 }

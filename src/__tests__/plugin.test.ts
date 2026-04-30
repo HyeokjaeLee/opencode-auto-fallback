@@ -5,7 +5,7 @@ import { clearAllCooldowns, isModelInCooldown } from "../provider-state"
 import { removeSession } from "../session-state"
 import { createMockContext, createMockMessages } from "./mocks"
 
-const { handleRetry, handleImmediate, tryFallbackChain, showToastSafely, revertAndPrompt } = _forTesting
+const { handleRetry, handleImmediate, tryFallbackChain, showToastSafely, revertAndPrompt, isLargeContextAgent } = _forTesting
 
 function makeConfig(overrides?: Partial<FallbackConfig>): FallbackConfig {
   return {
@@ -54,6 +54,19 @@ describe("showToastSafely", () => {
     ).resolves.toBeUndefined()
 
     expect(noopLogger.warn).toHaveBeenCalled()
+  })
+})
+
+describe("isLargeContextAgent", () => {
+  it("matches configured agents case-insensitively and ignores whitespace", () => {
+    expect(isLargeContextAgent("Sisyphus", ["sisyphus", "hephaestus"])).toBe(true)
+    expect(isLargeContextAgent("HEPHAESTUS", ["sisyphus", "hephaestus"])).toBe(true)
+    expect(isLargeContextAgent("​Sisyphus - Ultraworker", ["sisyphus-ultraworker"])).toBe(true)
+  })
+
+  it("does not match different agent names", () => {
+    expect(isLargeContextAgent("Sisyphus - Ultraworker", ["sisyphus", "hephaestus"])).toBe(false)
+    expect(isLargeContextAgent(undefined, ["sisyphus", "hephaestus"])).toBe(false)
   })
 })
 

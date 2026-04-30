@@ -1,5 +1,5 @@
 import { describe, it, expect, afterEach } from "vitest"
-import { parseModel, getFallbackChain } from "../config"
+import { parseModel, getFallbackChain, normalizeAgentName } from "../config"
 import { classifyError } from "../decision"
 import {
   activateCooldown,
@@ -92,6 +92,23 @@ describe("getFallbackChain", () => {
       variant: "high",
       temperature: 0.7,
     })
+  })
+  it("matches agentFallbacks case-insensitively and ignores whitespace", () => {
+    const configWithDisplayName: FallbackConfig = {
+      ...config,
+      agentFallbacks: {
+        "sisyphus-ultraworker": ["opencode-go/deepseek-v4-pro"],
+      },
+    }
+    expect(getFallbackChain(configWithDisplayName, "​Sisyphus - Ultraworker")).toEqual([
+      { providerID: "opencode-go", modelID: "deepseek-v4-pro" },
+    ])
+  })
+})
+
+describe("normalizeAgentName", () => {
+  it("removes whitespace and zero-width characters before lowercasing", () => {
+    expect(normalizeAgentName("​Sisyphus - Ultraworker")).toBe("sisyphus-ultraworker")
   })
 })
 
