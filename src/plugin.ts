@@ -28,7 +28,6 @@ import { adaptMessages, getModelFromMessage } from "./adapters/sdk-adapter"
 import {
   setActiveFallbackParams,
   getAndClearFallbackParams,
-  clearActiveFallbackParams,
   setCurrentModel,
   getCurrentModel,
   hasModelChanged,
@@ -516,24 +515,10 @@ export async function createPlugin(context: PluginInput): Promise<Hooks> {
         return
       }
 
-      // Fallback: fork failed, abort and revert with original model
-      await logger.warn("Compacting: fork failed, reverting to abort+rescue path", {
+      // Fork failed — let normal compaction proceed as if nothing happened.
+      await logger.warn("Compacting: fork failed, letting normal compaction proceed", {
         sessionID: input.sessionID, error: forkResult.error,
       })
-      await abortSession(input.sessionID, context)
-      deleteLargeContextPhase(input.sessionID)
-      clearActiveFallbackParams(input.sessionID)
-      const rescueModel: { providerID: string; modelID: string } =
-        currentModel ?? { providerID: original.providerID, modelID: original.modelID }
-      const rescueOk = await revertAndPrompt(
-        input.sessionID, agent, extracted.parts, extracted.info.id,
-        rescueModel, logger, context,
-      )
-      if (!rescueOk) {
-        await logger.error("Compacting: failed to restore session after fork failure", {
-          sessionID: input.sessionID,
-        })
-      }
     },
     event: async ({ event }) => {
       if (event.type === "session.error") {
