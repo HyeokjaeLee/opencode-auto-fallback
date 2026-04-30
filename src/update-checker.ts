@@ -6,6 +6,8 @@ import { join } from "node:path"
 const REGISTRY_URL = "https://registry.npmjs.org/opencode-auto-fallback/latest"
 const PACKAGE_NAME = "opencode-auto-fallback"
 
+let updateAlreadyAttempted = false
+
 export interface UpdateInfo {
   current: string
   latest: string
@@ -13,6 +15,10 @@ export interface UpdateInfo {
 }
 
 export async function checkForUpdates(currentVersion: string): Promise<UpdateInfo> {
+  if (updateAlreadyAttempted) {
+    return { current: currentVersion, latest: currentVersion, hasUpdate: false }
+  }
+  updateAlreadyAttempted = true
   try {
     const controller = new AbortController()
     const timeout = setTimeout(() => controller.abort(), 5000)
