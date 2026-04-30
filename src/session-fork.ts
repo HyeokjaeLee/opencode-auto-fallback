@@ -151,7 +151,7 @@ export async function injectForkResult(
       parts.push({ type: "text", text: `\n\nYour last task before compaction was:\n"""\n${lastRequest}\n"""` })
     }
     parts.push({ type: "text", text: `\n\nHere is the result:\n"""\n${assistantText}\n"""` })
-    parts.push({ type: "text", text: "\n\nContinue the work based on the result above. Proceed with any remaining steps or follow-ups." })
+    parts.push({ type: "text", text: "\n\nReview the result above. If there are remaining steps or follow-ups, continue with them. Otherwise, no further action is needed." })
 
     await context.client.session.prompt({
       path: { id: mainSessionID },

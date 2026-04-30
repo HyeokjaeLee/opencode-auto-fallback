@@ -255,7 +255,8 @@ describe("injectForkResult", () => {
     expect(injectText).toContain("Your conversation context was compacted")
     expect(injectText).toContain("Your last task before compaction was")
     expect(injectText).toContain("Here is the result")
-    expect(injectText).toContain("Continue the work based on the result above")
+    expect(injectText).toContain("Review the result above")
+    expect(injectText).toContain("If there are remaining steps")
 
     // Final status is "done"
     expect(getForkTracking(FORKED_SESSION_ID)?.status).toBe("done")
