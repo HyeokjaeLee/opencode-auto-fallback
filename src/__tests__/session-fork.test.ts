@@ -70,12 +70,11 @@ describe("forkSessionForLargeContext", () => {
   // -----------------------------------------------------------------------
   // Test 1 – Happy path
   // -----------------------------------------------------------------------
-  it("fork succeeds → returns ok=true and calls prompt on forked session", async () => {
+  it("fork succeeds → returns ok=true with forked session id", async () => {
     const mockFork = vi
       .fn()
       .mockResolvedValue({ data: { id: FORKED_SESSION_ID } })
-    const mockPrompt = vi.fn().mockResolvedValue(undefined)
-    const ctx = createMockContext({ fork: mockFork, prompt: mockPrompt })
+    const ctx = createMockContext({ fork: mockFork })
 
     const result = await forkSessionForLargeContext(
       MAIN_SESSION_ID,
@@ -93,28 +92,13 @@ describe("forkSessionForLargeContext", () => {
     expect(mockFork).toHaveBeenCalledTimes(1)
     expect(mockFork).toHaveBeenCalledWith({ path: { id: MAIN_SESSION_ID } })
 
-    // Prompt sent to the forked session with the large model
-    expect(mockPrompt).toHaveBeenCalledTimes(1)
-    expect(mockPrompt).toHaveBeenCalledWith({
-      path: { id: FORKED_SESSION_ID },
-      body: {
-        model: { providerID: "openai", modelID: "gpt-5.5" },
-        agent: AGENT,
-        parts: [
-          {
-            type: "text",
-            text:
-              "Continue the interrupted work from the existing conversation " +
-              "context. Do not restart or repeat the previous request.",
-          },
-        ],
-      },
-    })
+    // Prompt is NOT sent from forkSessionForLargeContext — it is dispatched
+    // asynchronously when the fork session's compaction completes.
 
-    // Tracking entry is created with "running" status
+    // Tracking entry is created with "forking" status (prompt sent later)
     const entry = getForkTracking(FORKED_SESSION_ID)
     expect(entry).toBeDefined()
-    expect(entry!.status).toBe("running")
+    expect(entry!.status).toBe("forking")
     expect(entry!.agent).toBe(AGENT)
     expect(entry!.largeModel).toEqual(largeModel)
     expect(entry!.originalModel).toEqual(originalModel)
@@ -196,9 +180,9 @@ describe("forkSessionForLargeContext", () => {
         noopLogger,
       )
 
-      // Fork succeeded and status is "running"
+      // Fork succeeded and status is "forking" (prompt sent later)
       expect(result.ok).toBe(true)
-      expect(getForkTracking(FORKED_SESSION_ID)?.status).toBe("running")
+      expect(getForkTracking(FORKED_SESSION_ID)?.status).toBe("forking")
 
       // Advance clock beyond the timeout threshold
       vi.advanceTimersByTime(FORK_TIMEOUT_MS + 1)

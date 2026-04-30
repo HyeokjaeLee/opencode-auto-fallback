@@ -49,19 +49,10 @@ export async function forkSessionForLargeContext(
       largeModel: `${largeModel.providerID}/${largeModel.modelID}`,
     })
 
-    updateForkStatus(forkedSessionID, "running")
-    setActiveFallbackParams(forkedSessionID, largeModel)
-    await context.client.session.prompt({
-      path: { id: forkedSessionID },
-      body: {
-        model: { providerID: largeModel.providerID, modelID: largeModel.modelID },
-        agent,
-        parts: [{ type: "text", text: "Continue the interrupted work from the existing conversation context. Do not restart or repeat the previous request." }],
-      },
-    })
-    await logger.info("Fork: prompt sent to forked session", { forkedSessionID })
-
-    setForkTracking({ ...trackingEntry, status: "running" })
+    // Prompt is NOT sent here — it will be sent asynchronously when the fork
+    // session's initial compaction completes (detected via session.compacted
+    // or session.idle event). This lets the main session's compaction proceed
+    // in parallel instead of blocking on the fork's prompt.
 
     setTimeout(() => {
       const current = getForkTracking(forkedSessionID)
@@ -80,6 +71,34 @@ export async function forkSessionForLargeContext(
     const errorMsg = err instanceof Error ? err.message : String(err)
     await logger.error("Fork: failed to fork session", { sessionID, error: errorMsg })
     return { ok: false, error: errorMsg }
+  }
+}
+
+export async function sendForkPrompt(
+  forkEntry: ForkTrackingEntry,
+  context: PluginInput,
+  logger: ReturnType<typeof createLogger>,
+): Promise<void> {
+  const { forkedSessionID, agent, largeModel } = forkEntry
+  try {
+    updateForkStatus(forkedSessionID, "running")
+    setActiveFallbackParams(forkedSessionID, largeModel)
+    await context.client.session.prompt({
+      path: { id: forkedSessionID },
+      body: {
+        model: { providerID: largeModel.providerID, modelID: largeModel.modelID },
+        agent,
+        parts: [{ type: "text", text: "Continue the interrupted work from the existing conversation context. If the task still has remaining work, continue it. If the task is complete, report the result without adding unnecessary continuation." }],
+      },
+    })
+    await logger.info("Fork: prompt sent to forked session", { forkedSessionID })
+  } catch (err) {
+    const errorMsg = err instanceof Error ? err.message : String(err)
+    await logger.error("Fork: failed to send prompt to forked session", {
+      forkedSessionID,
+      error: errorMsg,
+    })
+    updateForkStatus(forkedSessionID, "failed")
   }
 }
 
