@@ -610,10 +610,23 @@ export async function createPlugin(context: PluginInput): Promise<Hooks> {
 
         if (props.status.type === "retry" && props.status.message) {
           if (isRateLimitMessage(props.status.message)) {
-            await logger.info("Rate-limit retry intercepted via session.status", {
+            const attempt = props.status.attempt ?? 1
+
+            if (attempt <= config.maxRetries) {
+              await logger.info("Allowing opencode retry within maxRetries", {
+                sessionID: props.sessionID,
+                attempt,
+                maxRetries: config.maxRetries,
+                message: props.status.message,
+              })
+              return
+            }
+
+            await logger.info("Rate-limit retries exhausted, falling back", {
               sessionID: props.sessionID,
               message: props.status.message,
-              attempt: props.status.attempt,
+              attempt,
+              maxRetries: config.maxRetries,
               cooldownActive: isCooldownActive(props.sessionID),
             })
 
