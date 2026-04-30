@@ -1,9 +1,14 @@
 import type { Hooks, PluginInput } from "@opencode-ai/plugin"
-import type { Message as SDKMessage, Part as SDKPart } from "@opencode-ai/sdk"
-import type { FallbackConfig, FallbackModel, ToastOptions, MessageInfo, MessagePart, MessageWithParts } from "./types"
+import type { FallbackConfig, FallbackModel, ToastOptions } from "./types"
 import { getFallbackChain, loadConfig, normalizeAgentName, parseModel } from "./config"
 import { classifyError, isTransientErrorMessage, isPermanentRateLimitMessage } from "./decision"
-import { BACKOFF_BASE_MS } from "./constants"
+import {
+  BACKOFF_BASE_MS,
+  ABORT_DELAY_MS,
+  REVERT_DELAY_MS,
+  TOAST_DURATION_MS,
+  TOAST_DURATION_LONG_MS,
+} from "./constants"
 import { createLogger } from "./log"
 import {
   isCooldownActive,
@@ -18,54 +23,27 @@ import { markModelCooldown, isModelInCooldown, cleanupExpired } from "./provider
 import { checkForUpdates, tryInstallUpdate } from "./update-checker"
 import { version as currentVersion } from "../package.json"
 import { extractUserParts, type PromptPart } from "./message"
-
-// SDK → domain type adapters
-
-function toMessageInfo(msg: SDKMessage): MessageInfo {
-  if (msg.role === "assistant") {
-    return {
-      id: msg.id,
-      role: "assistant",
-      sessionID: msg.sessionID,
-      model: { providerID: msg.providerID, modelID: msg.modelID },
-    }
-  }
-  return {
-    id: msg.id,
-    role: "user",
-    sessionID: msg.sessionID,
-    agent: msg.agent,
-    model: msg.model,
-  }
-}
-
-function toMessagePart(part: SDKPart): MessagePart {
-  const base: MessagePart = { id: part.id, type: part.type }
-  switch (part.type) {
-    case "text":
-      return { ...base, text: part.text, synthetic: part.synthetic }
-    case "file":
-      return { ...base, mime: part.mime, filename: part.filename, url: part.url }
-    case "agent":
-      return { ...base, name: part.name }
-    default:
-      return base
-  }
-}
-
-function adaptMessages(raw: Array<{ info: SDKMessage; parts: SDKPart[] }>): MessageWithParts[] {
-  return raw.map(({ info, parts }) => ({
-    info: toMessageInfo(info),
-    parts: parts.map(toMessagePart),
-  }))
-}
-
-function getModelFromMessage(msg: SDKMessage): { providerID: string; modelID: string } {
-  if (msg.role === "assistant") {
-    return { providerID: msg.providerID, modelID: msg.modelID }
-  }
-  return msg.model
-}
+import type { Message as SDKMessage, Part as SDKPart } from "@opencode-ai/sdk"
+import { adaptMessages, getModelFromMessage } from "./adapters/sdk-adapter"
+import {
+  setActiveFallbackParams,
+  getAndClearFallbackParams,
+  clearActiveFallbackParams,
+  setCurrentModel,
+  getCurrentModel,
+  hasModelChanged,
+  getOrSetOriginalModel,
+  getOriginalModel,
+  setLargeContextPhase,
+  getLargeContextPhase,
+  deleteLargeContextPhase,
+  setModelContextLimit,
+  getModelContextLimit,
+  setSessionCooldownModel,
+  getSessionCooldownModel,
+  deleteSessionCooldownModel,
+  cleanupSession,
+} from "./state/context-state"
 
 // tui is available at runtime but not typed in the SDK
 
@@ -75,38 +53,15 @@ interface ToastClient {
 
 type ClientWithTui = PluginInput["client"] & { tui?: ToastClient }
 
-const activeFallbackParams = new Map<string, FallbackModel>()
-
-type LargeContextPhase = "active" | "summarizing"
-const largeContextSessions = new Map<string, { providerID: string; modelID: string }>()
-const currentModelSessions = new Map<string, { providerID: string; modelID: string }>()
-const sessionCooldownModel = new Map<string, { providerID: string; modelID: string }>()
-const largeContextPhase = new Map<string, LargeContextPhase>()
-const modelContextLimits = new Map<string, number>()
-
-const BUILTIN_CONTEXT_WINDOWS: Record<string, number> = {
-  "opencode-go/deepseek-v4-flash": 131072,
-  "opencode-go/deepseek-v4-pro": 262144,
-  "anthropic/claude-sonnet-4": 200000,
-  "anthropic/claude-opus-4": 200000,
-  "anthropic/claude-haiku-3.5": 200000,
-  "openai/gpt-4o": 128000,
-  "openai/gpt-4o-mini": 128000,
-  "openai/gpt-5.5": 2097152,
-  "openai/o3": 200000,
-  "google/gemini-2.5-flash": 1048576,
-  "google/gemini-2.5-pro": 1048576,
-  "zai-coding-plan/glm-5.1": 131072,
-  "deepseek/deepseek-chat": 131072,
-  "deepseek/deepseek-reasoner": 131072,
-}
+import { BUILTIN_CONTEXT_WINDOWS } from "./context-windows"
 
 function contextWindowFor(
   model: { providerID: string; modelID: string },
   contextWindows?: Record<string, number>,
 ): number | undefined {
   const key = `${model.providerID}/${model.modelID}`
-  if (modelContextLimits.has(key)) return modelContextLimits.get(key)!
+  const detected = getModelContextLimit(key)
+  if (detected !== undefined) return detected
   if (contextWindows?.[key] !== undefined) return contextWindows[key]
   return BUILTIN_CONTEXT_WINDOWS[key]
 }
@@ -123,16 +78,6 @@ function shouldSkipLargeContextFallback(
   minContextRatio: number,
 ): boolean {
   return largeWindow / currentWindow <= 1 + minContextRatio
-}
-
-function setActiveFallbackParams(sessionID: string, model: FallbackModel): void {
-  activeFallbackParams.set(sessionID, model)
-}
-
-function getAndClearFallbackParams(sessionID: string): FallbackModel | undefined {
-  const params = activeFallbackParams.get(sessionID)
-  activeFallbackParams.delete(sessionID)
-  return params
 }
 
 async function showToastSafely(
@@ -169,13 +114,13 @@ async function fetchSessionData(sessionID: string, context: PluginInput, logger:
   const lastAssistant = [...raw].reverse().find(m => m.info.role === "assistant")
   const currentModel = lastAssistant
     ? getModelFromMessage(lastAssistant.info)
-    : hookInput?.model ?? currentModelSessions.get(sessionID)
+    : hookInput?.model ?? getCurrentModel(sessionID)
   return { messages, extracted, currentModel }
 }
 
 async function abortSession(sessionID: string, context: PluginInput) {
   await context.client.session.abort({ path: { id: sessionID } })
-  await new Promise(resolve => setTimeout(resolve, 300))
+  await new Promise(resolve => setTimeout(resolve, ABORT_DELAY_MS))
 }
 
 async function revertAndPrompt(
@@ -190,7 +135,7 @@ async function revertAndPrompt(
   try {
     setActiveFallbackParams(sessionID, model)
     await context.client.session.revert({ path: { id: sessionID }, body: { messageID } })
-    await new Promise(resolve => setTimeout(resolve, 500))
+    await new Promise(resolve => setTimeout(resolve, REVERT_DELAY_MS))
     await context.client.session.prompt({
       path: { id: sessionID },
       body: {
@@ -230,7 +175,7 @@ async function tryFallbackChain(
         title: "Model Fallback",
         message: `Switched to ${chain[i].providerID}/${chain[i].modelID}`,
         variant: "info",
-        duration: 5000,
+        duration: TOAST_DURATION_MS,
       }, logger)
       return true
     }
@@ -239,7 +184,7 @@ async function tryFallbackChain(
     title: "Fallback Failed",
     message: "All fallback models exhausted",
     variant: "error",
-    duration: 5000,
+    duration: TOAST_DURATION_MS,
   }, logger)
   await logger.error("All fallback models exhausted", { sessionID, chainLength: chain.length })
   return false
@@ -284,7 +229,7 @@ async function handleRetry(
       title: "Retries Exhausted",
       message: `Switching to fallback after ${config.maxRetries} retries`,
       variant: "warning",
-      duration: 5000,
+      duration: TOAST_DURATION_MS,
     }, logger)
     await logger.info(`Retries exhausted (${backoffLevel}), starting fallback chain`, { sessionID })
   }
@@ -307,13 +252,13 @@ async function handleImmediate(
   const { extracted, currentModel } = await fetchSessionData(sessionID, context, logger, hookInput)
 
   if (currentModel) {
-    sessionCooldownModel.set(sessionID, { providerID: currentModel.providerID, modelID: currentModel.modelID })
+    setSessionCooldownModel(sessionID, currentModel.providerID, currentModel.modelID)
     markModelCooldown(currentModel.providerID, currentModel.modelID, config.cooldownMs)
     await showToastSafely(context, {
       title: "Model Error",
       message: `${currentModel.providerID}/${currentModel.modelID} failed, switching to fallback`,
       variant: "warning",
-      duration: 5000,
+      duration: TOAST_DURATION_MS,
     }, logger)
     await logger.info(`Model ${currentModel.providerID}/${currentModel.modelID} in cooldown`, { sessionID })
   }
@@ -324,7 +269,7 @@ async function handleImmediate(
   }
 
   await abortSession(sessionID, context)
-  largeContextPhase.delete(sessionID)
+  deleteLargeContextPhase(sessionID)
   const chain = getFallbackChain(config, extracted.info.agent)
   await logger.info(`Immediate fallback chain (${chain.length} models)`, { sessionID })
   if (chain.length === 0) {
@@ -359,7 +304,7 @@ export async function createPlugin(context: PluginInput): Promise<Hooks> {
       title: "Updating Plugin",
       message: `opencode-auto-fallback ${info.current} → ${info.latest}`,
       variant: "info",
-      duration: 5000,
+      duration: TOAST_DURATION_MS,
     }, logger)
 
     const ok = await tryInstallUpdate(info.latest)
@@ -369,7 +314,7 @@ export async function createPlugin(context: PluginInput): Promise<Hooks> {
         title: "Plugin Updated",
         message: `opencode-auto-fallback updated to ${info.latest}`,
         variant: "success",
-        duration: 5000,
+        duration: TOAST_DURATION_MS,
       }, logger)
     } else {
       await logger.warn("Auto-update failed")
@@ -377,25 +322,25 @@ export async function createPlugin(context: PluginInput): Promise<Hooks> {
         title: "Update Failed",
         message: `Could not auto-update. Run manually: bun update opencode-auto-fallback`,
         variant: "warning",
-        duration: 8000,
+        duration: TOAST_DURATION_LONG_MS,
       }, logger)
     }
-  }).catch(() => {})
+  }).catch(async (err) => {
+    await logger.warn("Update check failed", { error: err instanceof Error ? err.message : String(err) })
+  })
 
   return {
     "chat.params": async (input, output) => {
       if (input.model) {
-        const prev = currentModelSessions.get(input.sessionID)
-        const changed = !prev || prev.providerID !== input.model.providerID || prev.modelID !== input.model.id
+        const { changed, previous: prev } = hasModelChanged(
+          input.sessionID, input.model.providerID, input.model.id,
+        )
 
-        currentModelSessions.set(input.sessionID, {
-          providerID: input.model.providerID,
-          modelID: input.model.id,
-        })
+        setCurrentModel(input.sessionID, input.model.providerID, input.model.id)
 
         if (changed) {
           deactivateCooldown(input.sessionID)
-          sessionCooldownModel.delete(input.sessionID)
+          deleteSessionCooldownModel(input.sessionID)
           await logger.info("Model changed, cooldown reset", {
             sessionID: input.sessionID,
             model: `${input.model.providerID}/${input.model.id}`,
@@ -403,21 +348,12 @@ export async function createPlugin(context: PluginInput): Promise<Hooks> {
           })
         }
 
-        if (!largeContextSessions.has(input.sessionID)) {
-          largeContextSessions.set(input.sessionID, {
-            providerID: input.model.providerID,
-            modelID: input.model.id,
-          })
-          await logger.info("Tracked original model for session", {
-            sessionID: input.sessionID,
-            model: `${input.model.providerID}/${input.model.id}`,
-          })
-        }
+        getOrSetOriginalModel(input.sessionID, input.model.providerID, input.model.id)
 
         const ctxLimit = (input.model as { limit?: { context?: number } }).limit?.context
         if (ctxLimit !== undefined) {
           const modelKey = `${input.model.providerID}/${input.model.id}`
-          modelContextLimits.set(modelKey, ctxLimit)
+          setModelContextLimit(modelKey, ctxLimit)
           if (changed) {
             await logger.info("Detected model context limit", {
               sessionID: input.sessionID,
@@ -458,13 +394,13 @@ export async function createPlugin(context: PluginInput): Promise<Hooks> {
         return
       }
 
-      const original = largeContextSessions.get(input.sessionID)
+      const original = getOriginalModel(input.sessionID)
       if (!original) {
         await logger.info("Compacting: no original model tracked for session", { sessionID: input.sessionID })
         return
       }
 
-      if (largeContextPhase.get(input.sessionID) === "summarizing") {
+      if (getLargeContextPhase(input.sessionID) === "summarizing") {
         await logger.info("Compacting: summarizing phase, letting compaction proceed", { sessionID: input.sessionID })
         return
       }
@@ -483,7 +419,7 @@ export async function createPlugin(context: PluginInput): Promise<Hooks> {
 
       const parsed = parseModel(lcf.model)
 
-      if (largeContextPhase.get(input.sessionID) === "active") {
+      if (getLargeContextPhase(input.sessionID) === "active") {
         await logger.info("Compacting: large model context full, letting compaction proceed", {
           sessionID: input.sessionID, largeModel: `${parsed.providerID}/${parsed.modelID}`,
         })
@@ -527,7 +463,7 @@ export async function createPlugin(context: PluginInput): Promise<Hooks> {
         fromModel: currentModel ? `${currentModel.providerID}/${currentModel.modelID}` : "unknown",
       })
       await abortSession(input.sessionID, context)
-      largeContextPhase.set(input.sessionID, "active")
+      setLargeContextPhase(input.sessionID, "active")
       setActiveFallbackParams(input.sessionID, { providerID: parsed.providerID, modelID: parsed.modelID })
       let ok: boolean
       try {
@@ -548,8 +484,8 @@ export async function createPlugin(context: PluginInput): Promise<Hooks> {
         ok = false
       }
       if (!ok) {
-        largeContextPhase.delete(input.sessionID)
-        activeFallbackParams.delete(input.sessionID)
+        deleteLargeContextPhase(input.sessionID)
+        clearActiveFallbackParams(input.sessionID)
         await logger.warn("Compacting: large model unavailable, reverting to normal compaction", {
           sessionID: input.sessionID, largeModel: lcf.model,
         })
@@ -570,7 +506,7 @@ export async function createPlugin(context: PluginInput): Promise<Hooks> {
         title: "Large Context Model",
         message: `Switched to ${lcf.model} for large context`,
         variant: "info",
-        duration: 5000,
+        duration: TOAST_DURATION_MS,
       }, logger)
     },
     event: async ({ event }) => {
@@ -617,8 +553,8 @@ export async function createPlugin(context: PluginInput): Promise<Hooks> {
         // Model-aware cooldown: allow through if the current model differs from the one that triggered cooldown
         const cooldownActive = isCooldownActive(sessionID)
         if (cooldownActive) {
-          const currentModel = currentModelSessions.get(sessionID)
-          const cooldownModel = sessionCooldownModel.get(sessionID)
+          const currentModel = getCurrentModel(sessionID)
+          const cooldownModel = getSessionCooldownModel(sessionID)
           if (currentModel && cooldownModel &&
               (currentModel.providerID !== cooldownModel.providerID ||
                currentModel.modelID !== cooldownModel.modelID)) {
@@ -663,13 +599,13 @@ export async function createPlugin(context: PluginInput): Promise<Hooks> {
           return
         }
 
-        const original = largeContextSessions.get(props.sessionID)
+        const original = getOriginalModel(props.sessionID)
         if (!original) {
           await logger.info("Compacted: no original model tracked for session", { sessionID: props.sessionID })
           return
         }
 
-        const phase = largeContextPhase.get(props.sessionID)
+        const phase = getLargeContextPhase(props.sessionID)
         if (phase !== "active" && phase !== "summarizing") {
           await logger.info("Compacted: not in large context phase, skipping", { sessionID: props.sessionID, phase: phase ?? "none" })
           return
@@ -690,7 +626,7 @@ export async function createPlugin(context: PluginInput): Promise<Hooks> {
         await logger.info("Compacted: switching back to original model", {
           sessionID: props.sessionID, original,
         })
-        largeContextPhase.delete(props.sessionID)
+        deleteLargeContextPhase(props.sessionID)
         const ok = await revertAndPrompt(
           props.sessionID, extracted.info.agent, extracted.parts, extracted.info.id,
           original, logger, context,
@@ -703,15 +639,15 @@ export async function createPlugin(context: PluginInput): Promise<Hooks> {
           title: "Original Model Restored",
           message: `Switched back to ${original.providerID}/${original.modelID}`,
           variant: "info",
-          duration: 5000,
+          duration: TOAST_DURATION_MS,
         }, logger)
       }
       if (event.type === "session.idle") {
         const props = event.properties as { sessionID: string }
-        const phase = largeContextPhase.get(props.sessionID)
+        const phase = getLargeContextPhase(props.sessionID)
         const lcf = config.largeContextFallback
         if (phase === "active" && lcf) {
-          const original = largeContextSessions.get(props.sessionID)
+          const original = getOriginalModel(props.sessionID)
           if (!original) {
             await logger.warn("Idle: cannot trigger summarize, no original model tracked", {
               sessionID: props.sessionID,
@@ -722,7 +658,7 @@ export async function createPlugin(context: PluginInput): Promise<Hooks> {
           await logger.info("Idle: large model finished, triggering summarize for compact", {
             sessionID: props.sessionID, originalModel: `${original.providerID}/${original.modelID}`,
           })
-          largeContextPhase.set(props.sessionID, "summarizing")
+          setLargeContextPhase(props.sessionID, "summarizing")
           // Try original model first (correct compaction target size).
           // If it fails (context too large for original model), fall back to large model.
           const trySummarize = async (label: string, p: { providerID: string; modelID: string }): Promise<boolean> => {
@@ -748,7 +684,7 @@ export async function createPlugin(context: PluginInput): Promise<Hooks> {
               await logger.warn("Idle: both summarize attempts failed, compaction may be inconsistent", {
                 sessionID: props.sessionID,
               })
-              largeContextPhase.delete(props.sessionID)
+              deleteLargeContextPhase(props.sessionID)
             }
           }
         }
@@ -822,10 +758,7 @@ export async function createPlugin(context: PluginInput): Promise<Hooks> {
         const props = event.properties as { info?: { id?: string } }
         if (props.info?.id) {
           removeSession(props.info.id)
-          largeContextSessions.delete(props.info.id)
-          currentModelSessions.delete(props.info.id)
-          sessionCooldownModel.delete(props.info.id)
-          largeContextPhase.delete(props.info.id)
+          cleanupSession(props.info.id)
           await logger.info("Session cleaned up", { sessionID: props.info.id })
         }
       }
@@ -840,6 +773,5 @@ export const _forTesting = {
   showToastSafely,
   revertAndPrompt,
   isLargeContextAgent,
-  largeContextPhase,
   shouldSkipLargeContextFallback,
 }
