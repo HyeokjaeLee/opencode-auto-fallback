@@ -117,10 +117,15 @@ export function tryInstallUpdate(): Promise<boolean> {
     }
 
     syncPackageJson(workspaceDir)
-
     invalidatePackage(workspaceDir)
 
-    const proc = spawn("bun", ["install"], {
+    const hasBunLock = existsSync(join(workspaceDir, "bun.lock")) || existsSync(join(workspaceDir, "bun.lockb"))
+    const hasNpmLock = existsSync(join(workspaceDir, "package-lock.json"))
+
+    const bin = hasBunLock || !hasNpmLock ? "bun" : "npm"
+    const args = [bin === "bun" ? "install" : "install"]
+
+    const proc = spawn(bin, args, {
       cwd: workspaceDir,
       stdio: "ignore",
       timeout: 60_000,
