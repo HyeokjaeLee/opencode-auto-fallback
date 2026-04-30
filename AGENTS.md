@@ -13,16 +13,21 @@ OpenCode plugin that intercepts LLM error responses and automatically switches t
 opencode-auto-fallback/
 ├── index.ts                  # Public API: exports createPlugin + types
 ├── src/
-│   ├── plugin.ts             # Core: hooks, retry logic, fallback execution
+│   ├── plugin.ts             # Orchestration: hooks wiring, update checker (~770 lines)
 │   ├── types.ts              # All interfaces/types (FallbackConfig, FallbackModel, ToastOptions, etc.)
 │   ├── config.ts             # Config loading, auto-generation, chain resolution
 │   ├── constants.ts          # HTTP status code sets + backoff base + error patterns
+│   ├── context-windows.ts    # Builtin model context window sizes
 │   ├── decision.ts           # classifyError() — statusCode + isRetryable → immediate | retry | ignore
 │   ├── session-state.ts      # Per-session cooldown + backoff level
 │   ├── provider-state.ts     # Per-model timed cooldown (Map<provider/model, expiry>)
 │   ├── message.ts            # Message extraction from session history
 │   ├── log.ts                # File logging to ~/.local/share/opencode/log/
 │   ├── update-checker.ts     # Auto-update via npm registry
+│   ├── adapters/
+│   │   └── sdk-adapter.ts    # SDK → domain type conversions (toMessageInfo, adaptMessages, etc.)
+│   ├── state/
+│   │   └── context-state.ts  # Centralized state: fallback params, model tracking, phase management
 │   └── __tests__/
 │       ├── mocks.ts          # createMockContext(), createMockMessages()
 │       ├── plugin.test.ts    # Integration tests (handler functions)
@@ -49,6 +54,9 @@ opencode-auto-fallback/
 | Add fallback model param      | `src/types.ts` FallbackModel + `src/plugin.ts` chat.params hook | Params go through chat.params, not prompt body                                     |
 | Add unit test                 | `src/__tests__/pure-functions.test.ts`                          | Import from module directly                                                        |
 | Add integration test          | `src/__tests__/plugin.test.ts`                                  | Use createMockContext() from mocks.ts                                              |
+| Change large context fallback | `src/plugin.ts` compacting/idle handlers                        | Three-tier context window: SDK auto-detect → config → builtin                     |
+| Change state management       | `src/state/context-state.ts`                                    | Centralized Maps: fallback params, model tracking, phase management               |
+| Change SDK adapters           | `src/adapters/sdk-adapter.ts`                                   | SDK → domain type conversions with zero `as any`                                  |
 
 ## CODE MAP
 
@@ -59,7 +67,7 @@ opencode-auto-fallback/
 | `handleRetry`      | function  | plugin.ts     | Abort → backoff → same-model retry → fallback chain                       |
 | `handleImmediate`  | function  | plugin.ts     | Abort → cooldown → fallback chain (no retry)                              |
 | `tryFallbackChain` | function  | plugin.ts     | Iterates chain, skips cooldown models                                     |
-| `adaptMessages`    | function  | plugin.ts     | SDK Message/Part → domain MessageWithParts                                |
+| `adaptMessages`    | function  | adapters/sdk-adapter.ts | SDK Message/Part → domain MessageWithParts                                |
 | `getFallbackChain` | function  | config.ts     | Resolves agent-specific or default chain                                  |
 | `loadConfig`       | function  | config.ts     | Loads from disk, auto-creates if missing                                  |
 | `FallbackConfig`   | interface | types.ts      | enabled, defaultFallback, agentFallbacks, cooldownMs, maxRetries, logging |
@@ -99,7 +107,7 @@ opencode-auto-fallback/
 ## KNOWN LIMITATIONS
 
 - Synchronous `readFileSync/writeFileSync` in config.ts mixed with async `appendFile/mkdir` in log.ts
-- Hardcoded await delays: 300ms (abort), 500ms (revert) — not configurable
+- Await delays extracted to constants (ABORT_DELAY_MS, REVERT_DELAY_MS) — not configurable by end users
 - No CI quality gates: tests and typecheck not run before publish
 
 ## COMMANDS
@@ -117,5 +125,5 @@ npm version patch --no-git-tag-version  # Bump version (CI handles release)
 - `session-state.ts` and `provider-state.ts` use module-level Maps — state lost on restart
 - Fallback model params (temperature, reasoningEffort, etc.) go through `chat.params` hook, not `session.prompt` body
 - `_forTesting` namespace exposes internal handlers for test access
-- SDK → domain type adapters in plugin.ts: `adaptMessages()`, `toMessageInfo()`, `toMessagePart()`, `getModelFromMessage()`
+- SDK → domain type adapters in `src/adapters/sdk-adapter.ts`: `toMessageInfo()`, `toMessagePart()`, `adaptMessages()`, `getModelFromMessage()`
 - Toast API uses `ClientWithTui` typed interface — `(context.client as ClientWithTui).tui?.showToast()` gracefully degrades if unavailable

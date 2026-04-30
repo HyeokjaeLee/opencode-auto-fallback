@@ -205,7 +205,7 @@ bun install
 # Type check
 tsc --noEmit
 
-# Run tests (75 tests)
+# Run tests (73 tests)
 bun vitest run
 
 # Bump version (CI auto-publishes)

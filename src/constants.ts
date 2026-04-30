@@ -27,3 +27,15 @@ export const PERMANENT_RATE_LIMIT_PATTERNS: readonly string[] = [
   "credit balance",
   "billing",
 ]
+
+/** Delay after aborting a session before sending a new prompt (ms) */
+export const ABORT_DELAY_MS = 300
+
+/** Delay after reverting a session before sending a new prompt (ms) */
+export const REVERT_DELAY_MS = 500
+
+/** Duration for toast notifications (ms) */
+export const TOAST_DURATION_MS = 5_000
+
+/** Duration for long/important toast notifications (ms) */
+export const TOAST_DURATION_LONG_MS = 8_000
