@@ -43,6 +43,8 @@ import {
   getSessionCooldownModel,
   deleteSessionCooldownModel,
   cleanupSession,
+  setSessionOriginalAgent,
+  getSessionOriginalAgent,
 } from "./state/context-state"
 
 // tui is available at runtime but not typed in the SDK
@@ -471,6 +473,7 @@ export async function createPlugin(context: PluginInput): Promise<Hooks> {
         sessionID: input.sessionID, agent, largeModel: lcf.model,
         fromModel: currentModel ? `${currentModel.providerID}/${currentModel.modelID}` : "unknown",
       })
+      if (agent) setSessionOriginalAgent(input.sessionID, agent)
       await abortSession(input.sessionID, context)
       setLargeContextPhase(input.sessionID, "active")
       setActiveFallbackParams(input.sessionID, { providerID: parsed.providerID, modelID: parsed.modelID })
@@ -626,7 +629,9 @@ export async function createPlugin(context: PluginInput): Promise<Hooks> {
           return
         }
 
-        const agent = extracted.info.agent
+        // Use the originally tracked agent name, not extracted.info.agent
+        // (which may point to a synthetic "Continue" message with a wrong agent)
+        const agent = getSessionOriginalAgent(props.sessionID) ?? extracted.info.agent
         if (!isLargeContextAgent(agent, lcf.agents)) {
           await logger.info("Compacted: agent not in largeContextFallback.agents", { sessionID: props.sessionID, agent, agents: lcf.agents })
           return
@@ -637,7 +642,7 @@ export async function createPlugin(context: PluginInput): Promise<Hooks> {
         })
         deleteLargeContextPhase(props.sessionID)
         const ok = await revertAndPrompt(
-          props.sessionID, extracted.info.agent, extracted.parts, extracted.info.id,
+          props.sessionID, agent, extracted.parts, extracted.info.id,
           original, logger, context,
         )
         if (!ok) {
