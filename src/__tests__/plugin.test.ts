@@ -279,7 +279,7 @@ describe("handleRetry", () => {
     )
   })
 
-  it("uses model from hook input when messages have no assistant", async () => {
+  it("prefers model from assistant message over hook input", async () => {
     const mockAbort = vi.fn().mockResolvedValue(undefined)
     const mockMessages = vi.fn().mockResolvedValue({
       data: createMockMessages({

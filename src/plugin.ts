@@ -1,5 +1,6 @@
 import type { Hooks, PluginInput } from "@opencode-ai/plugin"
-import type { FallbackConfig, FallbackModel } from "./types"
+import type { Message as SDKMessage, Part as SDKPart } from "@opencode-ai/sdk"
+import type { FallbackConfig, FallbackModel, ToastOptions, MessageInfo, MessagePart, MessageWithParts } from "./types"
 import { getFallbackChain, loadConfig, normalizeAgentName, parseModel } from "./config"
 import { classifyError, isTransientErrorMessage, isPermanentRateLimitMessage } from "./decision"
 import { BACKOFF_BASE_MS } from "./constants"
@@ -16,7 +17,63 @@ import {
 import { markModelCooldown, isModelInCooldown, cleanupExpired } from "./provider-state"
 import { checkForUpdates, tryInstallUpdate } from "./update-checker"
 import { version as currentVersion } from "../package.json"
-import { extractUserParts } from "./message"
+import { extractUserParts, type PromptPart } from "./message"
+
+// SDK → domain type adapters
+
+function toMessageInfo(msg: SDKMessage): MessageInfo {
+  if (msg.role === "assistant") {
+    return {
+      id: msg.id,
+      role: "assistant",
+      sessionID: msg.sessionID,
+      model: { providerID: msg.providerID, modelID: msg.modelID },
+    }
+  }
+  return {
+    id: msg.id,
+    role: "user",
+    sessionID: msg.sessionID,
+    agent: msg.agent,
+    model: msg.model,
+  }
+}
+
+function toMessagePart(part: SDKPart): MessagePart {
+  const base: MessagePart = { id: part.id, type: part.type }
+  switch (part.type) {
+    case "text":
+      return { ...base, text: part.text, synthetic: part.synthetic }
+    case "file":
+      return { ...base, mime: part.mime, filename: part.filename, url: part.url }
+    case "agent":
+      return { ...base, name: part.name }
+    default:
+      return base
+  }
+}
+
+function adaptMessages(raw: Array<{ info: SDKMessage; parts: SDKPart[] }>): MessageWithParts[] {
+  return raw.map(({ info, parts }) => ({
+    info: toMessageInfo(info),
+    parts: parts.map(toMessagePart),
+  }))
+}
+
+function getModelFromMessage(msg: SDKMessage): { providerID: string; modelID: string } {
+  if (msg.role === "assistant") {
+    return { providerID: msg.providerID, modelID: msg.modelID }
+  }
+  return msg.model
+}
+
+// tui is available at runtime but not typed in the SDK
+
+interface ToastClient {
+  showToast(params: { body: ToastOptions }): Promise<unknown>
+}
+
+type ClientWithTui = PluginInput["client"] & { tui?: ToastClient }
 
 const activeFallbackParams = new Map<string, FallbackModel>()
 
@@ -44,11 +101,12 @@ function getAndClearFallbackParams(sessionID: string): FallbackModel | undefined
 
 async function showToastSafely(
   context: PluginInput,
-  body: { title?: string; message: string; variant: "info" | "success" | "warning" | "error"; duration?: number },
+  body: ToastOptions,
   logger: ReturnType<typeof createLogger>,
 ): Promise<void> {
   try {
-    await (context.client as any).tui?.showToast({ body })
+    const client = context.client as ClientWithTui
+    await client.tui?.showToast({ body })
   } catch (err) {
     await logger.warn("Toast failed", { error: err instanceof Error ? err.message : String(err) })
   }
@@ -65,17 +123,17 @@ interface ChatMessageInput {
 
 async function fetchSessionData(sessionID: string, context: PluginInput, logger: ReturnType<typeof createLogger>, hookInput?: ChatMessageInput) {
   const messagesResponse = await context.client.session.messages({ path: { id: sessionID } })
-  const messages = (messagesResponse.data ?? []) as {
-    info: { id: string; role: string; sessionID: string; agent?: string; model?: { providerID: string; modelID: string } }
-    parts: any[]
-  }[]
-  let extracted = extractUserParts(messages as any)
+  const raw = (messagesResponse.data ?? []) as Array<{ info: SDKMessage; parts: SDKPart[] }>
+  const messages = adaptMessages(raw)
+  let extracted = extractUserParts(messages)
   if (!extracted) {
     await logger.info("No user parts found (non-synthetic), retrying with synthetic allowed", { sessionID })
-    extracted = extractUserParts(messages as any, { allowSynthetic: true })
+    extracted = extractUserParts(messages, { allowSynthetic: true })
   }
-  const lastAssistant = [...messages].reverse().find(m => m.info.role === "assistant")
-  const currentModel = lastAssistant?.info.model ?? hookInput?.model ?? currentModelSessions.get(sessionID)
+  const lastAssistant = [...raw].reverse().find(m => m.info.role === "assistant")
+  const currentModel = lastAssistant
+    ? getModelFromMessage(lastAssistant.info)
+    : hookInput?.model ?? currentModelSessions.get(sessionID)
   return { messages, extracted, currentModel }
 }
 
@@ -87,7 +145,7 @@ async function abortSession(sessionID: string, context: PluginInput) {
 async function revertAndPrompt(
   sessionID: string,
   agent: string | undefined,
-  parts: any[],
+  parts: PromptPart[],
   messageID: string,
   model: FallbackModel,
   logger: ReturnType<typeof createLogger>,
@@ -117,7 +175,7 @@ async function tryFallbackChain(
   sessionID: string,
   chain: FallbackModel[],
   agent: string | undefined,
-  parts: any[],
+  parts: PromptPart[],
   messageID: string,
   logger: ReturnType<typeof createLogger>,
   context: PluginInput,
@@ -289,7 +347,6 @@ export async function createPlugin(context: PluginInput): Promise<Hooks> {
   }).catch(() => {})
 
   return {
-    config: async (_input) => {},
     "chat.params": async (input, output) => {
       if (input.model) {
         const prev = currentModelSessions.get(input.sessionID)
@@ -344,7 +401,7 @@ export async function createPlugin(context: PluginInput): Promise<Hooks> {
         output.options.thinking = fallback.thinking
       }
     },
-    "experimental.session.compacting": async (input, output) => {
+    "experimental.session.compacting": async (input, _output) => {
       await logger.info("Compacting hook fired", { sessionID: input.sessionID })
       const lcf = config.largeContextFallback
       if (!lcf) {
@@ -363,7 +420,7 @@ export async function createPlugin(context: PluginInput): Promise<Hooks> {
         return
       }
 
-      const { extracted, currentModel, messages } = await fetchSessionData(input.sessionID, context, logger)
+      const { extracted, currentModel } = await fetchSessionData(input.sessionID, context, logger)
       if (!extracted) {
         await logger.info("Compacting: no extracted user message", { sessionID: input.sessionID })
         return

@@ -1,8 +1,6 @@
 import type { FallbackDecision } from "./types"
 import { IMMEDIATE_STATUS_CODES, RETRYABLE_STATUS_CODES, TRANSIENT_ERROR_PATTERNS, PERMANENT_RATE_LIMIT_PATTERNS } from "./constants"
 
-export { type FallbackDecision }
-
 export function classifyError(
   statusCode: number | undefined,
   isRetryable: boolean | undefined,

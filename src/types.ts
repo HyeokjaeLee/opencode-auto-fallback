@@ -87,3 +87,10 @@ export interface MessageWithParts {
   info: MessageInfo
   parts: MessagePart[]
 }
+
+export interface ToastOptions {
+  title?: string
+  message: string
+  variant: "info" | "success" | "warning" | "error"
+  duration?: number
+}

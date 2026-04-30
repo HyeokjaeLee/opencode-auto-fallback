@@ -11,16 +11,6 @@ import type {
   AgentFallbackMap,
 } from "./types";
 
-export type {
-  FallbackConfig,
-  FallbackEntry,
-  FallbackModel,
-  FallbackModelConfig,
-  ModelReference,
-  ResolvedModel,
-  AgentFallbackMap,
-};
-
 interface RawConfig {
   enabled?: boolean;
   defaultFallback?: ModelReference | FallbackEntry[];
@@ -38,7 +28,6 @@ const DEFAULT_CONFIG: FallbackConfig = {
   cooldownMs: 60_000,
   maxRetries: 2,
   logging: false,
-  largeContextFallback: { agents: [], model: "" },
 };
 
 const CONFIG_FILENAME = "fallback.json";
@@ -92,14 +81,6 @@ export function normalizeAgentName(agent: string): string {
   return agent.replace(/[\s\u200B-\u200D\uFEFF]/g, "").toLowerCase()
 }
 
-function normalizeFallbackEntry(entry: string | FallbackEntry): FallbackModel {
-  if (typeof entry === "string") {
-    const parsed = parseModel(entry)
-    return { providerID: parsed.providerID, modelID: parsed.modelID }
-  }
-  return entryToFallbackModel(entry)
-}
-
 function entryToFallbackModel(entry: FallbackModel | FallbackModelConfig): FallbackModel {
   if ("model" in entry) {
     const parsed = parseModel(entry.model)
@@ -121,7 +102,7 @@ function normalizeChain(
 ): FallbackEntry[] {
   if (raw === undefined) return [];
   if (Array.isArray(raw)) return raw;
-  return [typeof raw === "string" ? raw : raw];
+  return [raw];
 }
 
 function normalizeAgentMap(
@@ -133,7 +114,7 @@ function normalizeAgentMap(
     if (Array.isArray(value)) {
       result[agent] = value;
     } else {
-      result[agent] = [typeof value === "string" ? value : value];
+      result[agent] = [value];
     }
   }
   return result;
@@ -152,7 +133,6 @@ function writeDefaultConfig(configDir: string): string | null {
         cooldownMs: DEFAULT_CONFIG.cooldownMs,
         maxRetries: DEFAULT_CONFIG.maxRetries,
         logging: DEFAULT_CONFIG.logging,
-        largeContextFallback: DEFAULT_CONFIG.largeContextFallback,
       },
       null,
       2,
@@ -178,8 +158,7 @@ export function loadConfig(): FallbackConfig {
 
     return {
       enabled: userConfig.enabled ?? DEFAULT_CONFIG.enabled,
-      defaultFallback:
-        normalizeChain(userConfig.defaultFallback) ?? DEFAULT_CONFIG.defaultFallback,
+      defaultFallback: normalizeChain(userConfig.defaultFallback),
       agentFallbacks: normalizeAgentMap(userConfig.agentFallbacks),
       cooldownMs: userConfig.cooldownMs ?? DEFAULT_CONFIG.cooldownMs,
       maxRetries: userConfig.maxRetries ?? DEFAULT_CONFIG.maxRetries,

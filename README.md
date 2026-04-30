@@ -63,27 +63,27 @@ On first run, a default config is auto-created at `~/.config/opencode/fallback.j
 
 When an agent is provided by `oh-my-openagent`, the runtime agent name can differ from the key in `oh-my-openagent.json`. Configure fallback with the name that appears in OpenCode session logs, normalized by removing whitespace and ignoring case.
 
-For example, if logs show `agent=​Sisyphus - Ultraworker`, configure it as `sisyphus-ultraworker`:
+For example, if logs show `agent=Sisyphus - Ultraworker`, configure it as `Sisyphus - Ultraworker` (whitespace is stripped, case is ignored):
 
 ```jsonc
 {
   "agentFallbacks": {
-    "sisyphus-ultraworker": [
+    "Sisyphus - Ultraworker": [
       {
         "model": "opencode-go/deepseek-v4-pro",
         "variant": "high",
       },
     ],
-    "hephaestus-deepagent": ["zai-coding-plan/glm-5.1"],
+    "hephaestus - deepagent": ["zai-coding-plan/glm-5.1"],
   },
   "largeContextFallback": {
-    "agents": ["sisyphus-ultraworker", "hephaestus-deepagent"],
+    "agents": ["Sisyphus - Ultraworker", "hephaestus - deepagent"],
     "model": "opencode-go/deepseek-v4-pro",
   },
 }
 ```
 
-Agent matching is exact after normalization: `Sisyphus - Ultraworker`, `sisyphus-ultraworker`, and `SISYPHUSULTRAWORKER` match the same entry, but `sisyphus` does not automatically match `Sisyphus - Ultraworker`.
+Agent matching is exact after normalization: `Sisyphus - Ultraworker` and `sisyphus - ultraworker` match the same entry, but `sisyphus` does not automatically match `Sisyphus - Ultraworker`.
 
 ### Auto Updates
 
@@ -145,22 +145,25 @@ Each entry in a fallback chain can be a simple string or an object:
 
 ### Error Classification
 
-The plugin detects errors through SDK's `RetryPart` (type: `"retry"`) in `output.parts`, which provides structured `statusCode` and `isRetryable` flags — no text pattern matching.
+The plugin detects errors through `session.error` events (structured `statusCode` and `isRetryable` flags) and `session.status` events (message-based pattern matching for rate limits and transient errors).
 
 | Error type                  | Detection                               | Action                                      |
 | --------------------------- | --------------------------------------- | ------------------------------------------- |
 | **HTTP 401/402/403** (auth) | Status code in `IMMEDIATE_STATUS_CODES` | Immediate fallback                          |
 | **Retryable errors**        | `isRetryable === true` from SDK         | Backoff retry (2s → 4s → 8s…) then fallback |
 | **HTTP 429/5xx**            | Status code in `RETRYABLE_STATUS_CODES` | Backoff retry then fallback                 |
+| **Permanent rate limit**    | Text patterns: "usage limit", "quota exceeded", etc. | Immediate fallback |
+| **Transient errors**        | Text patterns: "rate limit", "overloaded", etc. | Allow SDK retry up to `maxRetries`, then fallback |
 | **Unknown errors**          | Default classification                  | Backoff retry then fallback _(safety net)_  |
 
 ### Retry Flow
 
+With the default `maxRetries: 2`:
+
 ```
 1st failure → abort → wait 2s   → re-prompt with SAME model
 2nd failure → abort → wait 4s   → re-prompt with SAME model
-3rd failure → abort → wait 8s   → re-prompt with SAME model
-4th failure → FALLBACK CHAIN: try next model in ordered list
+3rd failure → FALLBACK CHAIN: try next model in ordered list
 ```
 
 Immediate fallback errors (quota, auth) skip retries entirely and go straight to the fallback chain.
@@ -190,7 +193,7 @@ bun install
 # Type check
 tsc --noEmit
 
-# Run tests (58 tests)
+# Run tests (68 tests)
 bun vitest run
 
 # Bump version (CI auto-publishes)

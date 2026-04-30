@@ -45,36 +45,15 @@ export function createMockMessages(opts: {
       parts: [{ id: "p1", type: "text", text: opts.userText ?? "hello" }],
     },
     {
+      // SDK AssistantMessage has providerID/modelID as flat properties
       info: {
         id: "msg-a1",
         role: "assistant",
         sessionID: sid,
-        agent: opts.agent,
-        model: opts.providerID
-          ? { providerID: opts.providerID, modelID: opts.modelID ?? "test-model" }
-          : undefined,
+        providerID: opts.providerID,
+        modelID: opts.modelID ?? "test-model",
       },
       parts: [{ id: "p2", type: "text", text: opts.assistantText ?? "response" }],
     },
   ]
-}
-
-export function createMockRetryPart(opts: {
-  statusCode?: number
-  isRetryable?: boolean
-  message?: string
-}) {
-  return {
-    id: "retry-part-1",
-    type: "retry",
-    attempt: 1,
-    error: {
-      name: "APIError",
-      data: {
-        statusCode: opts.statusCode,
-        isRetryable: opts.isRetryable,
-        message: opts.message ?? "API error occurred",
-      },
-    },
-  }
 }

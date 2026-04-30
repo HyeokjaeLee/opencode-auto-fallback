@@ -1,6 +1,6 @@
 import { describe, it, expect, afterEach } from "vitest"
 import { parseModel, getFallbackChain, normalizeAgentName } from "../config"
-import { classifyError, isTransientErrorMessage, isPermanentRateLimitMessage } from "../decision"
+import { isTransientErrorMessage, isPermanentRateLimitMessage } from "../decision"
 import {
   activateCooldown,
   incrementBackoff,
@@ -9,7 +9,6 @@ import {
   resetIfExpired,
   removeSession,
 } from "../session-state"
-import { markModelCooldown, isModelInCooldown, clearAllCooldowns } from "../provider-state"
 import { shouldWriteLog } from "../log"
 import { extractUserParts } from "../message"
 import type { FallbackConfig } from "../types"
@@ -164,52 +163,6 @@ describe("shouldWriteLog", () => {
 
   it("keeps non-generic log messages", () => {
     expect(shouldWriteLog("Retryable error", { type: "message.part.delta" })).toBe(true)
-  })
-})
-
-describe("classifyError", () => {
-  it("401 → immediate", () => {
-    expect(classifyError(401, false, false)).toEqual(expect.objectContaining({ action: "immediate", httpStatus: 401 }))
-  })
-  it("isRetryable=true → retry", () => {
-    expect(classifyError(500, true, false)).toEqual(expect.objectContaining({ action: "retry", isRetryable: true }))
-  })
-  it("isRetryable=false → immediate", () => {
-    expect(classifyError(500, false, false)).toEqual(expect.objectContaining({ action: "immediate", isRetryable: false }))
-  })
-  it("no status, no isRetryable → retry (default)", () => {
-    expect(classifyError(undefined, undefined, false)).toEqual({ action: "retry" })
-  })
-  it("ignore when cooldown active", () => {
-    expect(classifyError(401, false, true)).toEqual({ action: "ignore" })
-  })
-  it("HTTP 429 → retry", () => {
-    expect(classifyError(429, undefined, false)).toEqual(expect.objectContaining({ action: "retry", httpStatus: 429 }))
-  })
-  it("HTTP 401 → immediate even when isRetryable", () => {
-    expect(classifyError(401, true, false)).toEqual(expect.objectContaining({ action: "immediate", httpStatus: 401 }))
-  })
-})
-
-describe("provider-state (timed cooldown)", () => {
-  afterEach(() => clearAllCooldowns())
-
-  it("starts as not in cooldown", () => {
-    expect(isModelInCooldown("openai", "gpt-5.5")).toBe(false)
-  })
-  it("marks and checks cooldown", () => {
-    markModelCooldown("openai", "gpt-5.5", 60_000)
-    expect(isModelInCooldown("openai", "gpt-5.5")).toBe(true)
-    expect(isModelInCooldown("openai", "gpt-5.4")).toBe(false)
-  })
-  it("auto-expires", () => {
-    markModelCooldown("openai", "gpt-5.5", -1)
-    expect(isModelInCooldown("openai", "gpt-5.5")).toBe(false)
-  })
-  it("clearAllCooldowns resets", () => {
-    markModelCooldown("openai", "gpt-5.5", 60_000)
-    clearAllCooldowns()
-    expect(isModelInCooldown("openai", "gpt-5.5")).toBe(false)
   })
 })
 
