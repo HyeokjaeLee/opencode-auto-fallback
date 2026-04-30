@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process"
-import { existsSync, readFileSync, writeFileSync, mkdirSync, rmSync } from "node:fs"
+import { existsSync, readFileSync, writeFileSync, rmSync } from "node:fs"
 import { homedir } from "node:os"
 import { join } from "node:path"
 
@@ -10,34 +10,11 @@ const CACHE_PACKAGES_DIR = join(
   "opencode",
   "packages",
 )
-const STATE_FILE = join(
-  process.env.XDG_DATA_HOME ?? join(homedir(), ".local", "share"),
-  "opencode",
-  "log",
-  "fallback-update-state.json",
-)
 
 export interface UpdateInfo {
   current: string
   latest: string
   hasUpdate: boolean
-}
-
-function getLastNotifiedVersion(): string | null {
-  try {
-    if (!existsSync(STATE_FILE)) return null
-    return (JSON.parse(readFileSync(STATE_FILE, "utf-8")) as { lastNotified?: string }).lastNotified ?? null
-  } catch {
-    return null
-  }
-}
-
-export function saveNotifiedVersion(version: string): void {
-  try {
-    const dir = join(STATE_FILE, "..")
-    mkdirSync(dir, { recursive: true })
-    writeFileSync(STATE_FILE, JSON.stringify({ lastNotified: version }), "utf-8")
-  } catch {}
 }
 
 export async function checkForUpdates(currentVersion: string): Promise<UpdateInfo> {
@@ -61,7 +38,7 @@ export async function checkForUpdates(currentVersion: string): Promise<UpdateInf
     return {
       current: currentVersion,
       latest,
-      hasUpdate: latest !== currentVersion && latest !== getLastNotifiedVersion(),
+      hasUpdate: latest !== currentVersion,
     }
   } catch {
     return { current: currentVersion, latest: currentVersion, hasUpdate: false }
