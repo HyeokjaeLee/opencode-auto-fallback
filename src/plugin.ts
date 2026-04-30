@@ -427,6 +427,65 @@ export async function createPlugin(context: PluginInput): Promise<Hooks> {
       }
     },
     event: async ({ event }) => {
+      if (event.type === "session.error") {
+        const props = event.properties as {
+          sessionID?: string
+          error?: {
+            name: string
+            data: {
+              message: string
+              statusCode?: number
+              isRetryable?: boolean
+              providerID?: string
+            }
+          }
+        }
+        const sessionID = props.sessionID
+        if (!sessionID) {
+          await logger.warn("session.error event without sessionID", { event })
+          return
+        }
+
+        const err = props.error
+        if (!err) {
+          await logger.info("session.error event without error payload", { sessionID })
+          return
+        }
+
+        // ProviderAuthError (name: "ProviderAuthError") has no statusCode/isRetryable — treat as immediate
+        const isAuthError = err.name === "ProviderAuthError"
+        const statusCode: number | undefined = err.data.statusCode
+        const isRetryable: boolean | undefined = isAuthError ? false : err.data.isRetryable
+
+        await logger.info("session.error detected", {
+          sessionID,
+          errorName: err.name,
+          statusCode,
+          isRetryable,
+          message: err.data.message,
+        })
+
+        const decision = classifyError(statusCode, isRetryable, isCooldownActive(sessionID))
+
+        if (decision.action === "immediate") {
+          await logger.info("Immediate error via session.error", {
+            sessionID,
+            httpStatus: decision.httpStatus,
+            isRetryable: decision.isRetryable,
+          })
+          await handleImmediate(sessionID, config, logger, context)
+          return
+        }
+
+        if (decision.action === "retry") {
+          await logger.info("Retryable error via session.error", {
+            sessionID,
+            httpStatus: decision.httpStatus,
+            isRetryable: decision.isRetryable,
+          })
+          await handleRetry(sessionID, config, logger, context)
+        }
+      }
       if (event.type === "session.compacted") {
         const props = event.properties as { sessionID: string }
         await logger.info("Compacted event received", { sessionID: props.sessionID })
