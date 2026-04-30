@@ -66,10 +66,17 @@ opencode-auto-fallback/
 ```
 1. Cooldown active → ignore
 2. HTTP 401/402/403 → immediate
-3. isRetryable === true → retry
-4. HTTP 429/500/502/503/504/529 → retry
-5. Default → retry (unknown errors get backoff+retry)
+3. isRetryable === true → retry (our plugin handles backoff)
+4. isRetryable === false → immediate (skip retry, go straight to fallback)
+5. HTTP 429/500/502/503/504/529 → retry (status code heuristic)
+6. Default → retry (unknown errors get backoff+retry)
 ```
+
+## KEY ARCHITECTURE DECISIONS
+- **opencode built-in retry is DISABLED** via `config` hook setting `chatMaxRetries = 0`
+- Our plugin has FULL control over retry + fallback logic
+- `isRetryable` from SDK's `ApiError.data.isRetryable` is the primary classification signal
+- Status code heuristics are used only when `isRetryable` is `undefined`
 
 ## CONVENTIONS
 - **Strict TS**: `"strict": true`, no `any` (3 exceptions for SDK type gaps)
@@ -93,7 +100,7 @@ opencode-auto-fallback/
 ```bash
 bun install            # Install deps (uses bun.lock)
 tsc --noEmit           # TypeScript typecheck
-bun vitest run         # Run all tests (58 tests, 4 files)
+bun vitest run         # Run all tests (63 tests, 4 files)
 npm version patch --no-git-tag-version  # Bump version (CI handles release)
 ```
 

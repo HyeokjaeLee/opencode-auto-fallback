@@ -102,6 +102,9 @@ describe("classifyError", () => {
   it("isRetryable=true → retry", () => {
     expect(classifyError(500, true, false)).toEqual(expect.objectContaining({ action: "retry", isRetryable: true }))
   })
+  it("isRetryable=false → immediate", () => {
+    expect(classifyError(500, false, false)).toEqual(expect.objectContaining({ action: "immediate", isRetryable: false }))
+  })
   it("no status, no isRetryable → retry (default)", () => {
     expect(classifyError(undefined, undefined, false)).toEqual({ action: "retry" })
   })

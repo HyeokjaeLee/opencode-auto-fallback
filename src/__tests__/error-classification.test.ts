@@ -75,15 +75,20 @@ describe("classifyError (structured)", () => {
     })
   })
 
-  describe("isRetryable === false with non-immediate status → retry (default)", () => {
-    it("non-retryable with unknown status code defaults to retry", () => {
+  describe("isRetryable === false → immediate fallback", () => {
+    it("non-retryable with unknown status code → immediate", () => {
       expect(classifyError(418, false, false)).toEqual(
-        expect.objectContaining({ action: "retry", httpStatus: 418, isRetryable: false }),
+        expect.objectContaining({ action: "immediate", httpStatus: 418, isRetryable: false }),
       )
     })
-    it("non-retryable with no status code defaults to retry", () => {
+    it("non-retryable with no status code → immediate", () => {
       expect(classifyError(undefined, false, false)).toEqual(
-        expect.objectContaining({ action: "retry", isRetryable: false }),
+        expect.objectContaining({ action: "immediate", isRetryable: false }),
+      )
+    })
+    it("non-retryable with 500 → immediate (overrides status code heuristic)", () => {
+      expect(classifyError(500, false, false)).toEqual(
+        expect.objectContaining({ action: "immediate", httpStatus: 500, isRetryable: false }),
       )
     })
   })

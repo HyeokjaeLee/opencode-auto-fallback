@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, afterEach } from "vitest"
 import type { FallbackConfig } from "../types"
 import { _forTesting } from "../plugin"
-import { clearAllCooldowns } from "../provider-state"
+import { clearAllCooldowns, isModelInCooldown } from "../provider-state"
 import { removeSession } from "../session-state"
 import { createMockContext, createMockMessages } from "./mocks"
 
@@ -155,6 +155,38 @@ describe("handleImmediate", () => {
       }),
     )
   })
+
+  it("marks model cooldown from hook input when messages have no assistant", async () => {
+    const mockMessages = vi.fn().mockResolvedValue({ data: [] })
+    const ctx = createMockContext({ messages: mockMessages })
+    const config = makeConfig()
+
+    await handleImmediate(SESSION, config, noopLogger, ctx, {
+      sessionID: SESSION,
+      agent: "oracle",
+      model: { providerID: "anthropic", modelID: "claude-sonnet-4" },
+    })
+
+    expect(isModelInCooldown("anthropic", "claude-sonnet-4")).toBe(true)
+  })
+
+  it("logs error but still marks cooldown when no user message and hook input provided", async () => {
+    const mockMessages = vi.fn().mockResolvedValue({ data: [] })
+    const ctx = createMockContext({ messages: mockMessages })
+    const config = makeConfig()
+
+    await handleImmediate(SESSION, config, noopLogger, ctx, {
+      sessionID: SESSION,
+      agent: "oracle",
+      model: { providerID: "anthropic", modelID: "claude-sonnet-4" },
+    })
+
+    expect(noopLogger.error).toHaveBeenCalledWith(
+      "Cannot fallback: no valid user message",
+      expect.any(Object),
+    )
+    expect(isModelInCooldown("anthropic", "claude-sonnet-4")).toBe(true)
+  })
 })
 
 describe("handleRetry", () => {
@@ -231,6 +263,40 @@ describe("handleRetry", () => {
     expect(noopLogger.error).toHaveBeenCalledWith(
       "Cannot retry: missing message or model",
       expect.any(Object),
+    )
+  })
+
+  it("uses model from hook input when messages have no assistant", async () => {
+    const mockAbort = vi.fn().mockResolvedValue(undefined)
+    const mockMessages = vi.fn().mockResolvedValue({
+      data: createMockMessages({
+        providerID: "openai",
+        modelID: "gpt-5.5",
+        agent: "oracle",
+      }),
+    })
+    const mockRevert = vi.fn().mockResolvedValue({ response: { status: 200 }, data: { revert: {} } })
+    const mockPrompt = vi.fn().mockResolvedValue(undefined)
+    const ctx = createMockContext({
+      abort: mockAbort,
+      messages: mockMessages,
+      revert: mockRevert,
+      prompt: mockPrompt,
+    })
+    const config = makeConfig()
+
+    await handleRetry(SESSION, config, noopLogger, ctx, {
+      sessionID: SESSION,
+      agent: "oracle",
+      model: { providerID: "anthropic", modelID: "claude-opus-4" },
+    })
+
+    expect(mockPrompt).toHaveBeenCalledWith(
+      expect.objectContaining({
+        body: expect.objectContaining({
+          model: { providerID: "openai", modelID: "gpt-5.5" },
+        }),
+      }),
     )
   })
 })

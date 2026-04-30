@@ -42,7 +42,16 @@ async function showToastSafely(
   }
 }
 
-async function fetchSessionData(sessionID: string, context: PluginInput) {
+interface ChatMessageInput {
+  sessionID: string
+  agent?: string
+  model?: {
+    providerID: string
+    modelID: string
+  }
+}
+
+async function fetchSessionData(sessionID: string, context: PluginInput, hookInput?: ChatMessageInput) {
   const messagesResponse = await context.client.session.messages({ path: { id: sessionID } })
   const messages = (messagesResponse.data ?? []) as {
     info: { id: string; role: string; sessionID: string; agent?: string; model?: { providerID: string; modelID: string } }
@@ -50,7 +59,8 @@ async function fetchSessionData(sessionID: string, context: PluginInput) {
   }[]
   const extracted = extractUserParts(messages as any)
   const lastAssistant = [...messages].reverse().find(m => m.info.role === "assistant")
-  return { messages, extracted, currentModel: lastAssistant?.info.model }
+  const currentModel = lastAssistant?.info.model ?? hookInput?.model
+  return { messages, extracted, currentModel }
 }
 
 async function abortSession(sessionID: string, context: PluginInput) {
@@ -130,11 +140,12 @@ async function handleRetry(
   config: FallbackConfig,
   logger: ReturnType<typeof createLogger>,
   context: PluginInput,
+  hookInput?: ChatMessageInput,
 ) {
   const backoffLevel = incrementBackoff(sessionID)
-  const { extracted, currentModel } = await fetchSessionData(sessionID, context)
+  const { extracted, currentModel } = await fetchSessionData(sessionID, context, hookInput)
   if (!extracted || !currentModel) {
-    await logger.error("Cannot retry: missing message or model", { sessionID })
+    await logger.error("Cannot retry: missing message or model", { sessionID, hasExtracted: !!extracted, hasCurrentModel: !!currentModel })
     return
   }
   await abortSession(sessionID, context)
@@ -173,13 +184,11 @@ async function handleImmediate(
   config: FallbackConfig,
   logger: ReturnType<typeof createLogger>,
   context: PluginInput,
+  hookInput?: ChatMessageInput,
 ) {
   activateCooldown(sessionID, config.cooldownMs)
-  const { extracted, currentModel } = await fetchSessionData(sessionID, context)
-  if (!extracted) {
-    await logger.error("Cannot fallback: no valid user message", { sessionID })
-    return
-  }
+  const { extracted, currentModel } = await fetchSessionData(sessionID, context, hookInput)
+
   if (currentModel) {
     markModelCooldown(currentModel.providerID, currentModel.modelID, config.cooldownMs)
     await showToastSafely(context, {
@@ -190,6 +199,12 @@ async function handleImmediate(
     }, logger)
     await logger.info(`Model ${currentModel.providerID}/${currentModel.modelID} in cooldown`, { sessionID })
   }
+
+  if (!extracted) {
+    await logger.error("Cannot fallback: no valid user message", { sessionID })
+    return
+  }
+
   await abortSession(sessionID, context)
   const chain = getFallbackChain(config, extracted.info.agent)
   await logger.info(`Immediate fallback chain (${chain.length} models)`, { sessionID })
@@ -253,6 +268,13 @@ export async function createPlugin(context: PluginInput): Promise<Hooks> {
   }).catch(() => {})
 
   return {
+    config: async (input) => {
+      if (input.experimental === undefined) {
+        (input as any).experimental = {}
+      }
+      input.experimental!.chatMaxRetries = 0
+      await logger.info("Disabled opencode built-in retry (chatMaxRetries = 0)")
+    },
     "chat.message": async (input, output) => {
       const retryPart = findRetryPart(output.parts)
       if (!retryPart) return
@@ -268,7 +290,7 @@ export async function createPlugin(context: PluginInput): Promise<Hooks> {
           httpStatus: decision.httpStatus,
           isRetryable: decision.isRetryable,
         })
-        await handleImmediate(input.sessionID, config, logger, context)
+        await handleImmediate(input.sessionID, config, logger, context, input)
         return
       }
 
@@ -278,7 +300,7 @@ export async function createPlugin(context: PluginInput): Promise<Hooks> {
           httpStatus: decision.httpStatus,
           isRetryable: decision.isRetryable,
         })
-        await handleRetry(input.sessionID, config, logger, context)
+        await handleRetry(input.sessionID, config, logger, context, input)
       }
     },
     "chat.params": async (input, output) => {
@@ -304,20 +326,36 @@ export async function createPlugin(context: PluginInput): Promise<Hooks> {
       }
     },
     "experimental.session.compacting": async (input, output) => {
+      await logger.info("Compacting hook fired", { sessionID: input.sessionID })
       const lcf = config.largeContextFallback
-      if (!lcf) return
+      if (!lcf) {
+        await logger.info("Compacting: no largeContextFallback config, skipping")
+        return
+      }
 
       const original = largeContextSessions.get(input.sessionID)
-      if (!original) return
+      if (!original) {
+        await logger.info("Compacting: no original model tracked for session", { sessionID: input.sessionID })
+        return
+      }
 
       const { extracted, currentModel, messages } = await fetchSessionData(input.sessionID, context)
-      if (!extracted) return
+      if (!extracted) {
+        await logger.info("Compacting: no extracted user message", { sessionID: input.sessionID })
+        return
+      }
 
       const lastRole = messages?.[messages.length - 1]?.info?.role
-      if (lastRole === "user") return
+      if (lastRole === "user") {
+        await logger.info("Compacting: last message is user, skipping", { sessionID: input.sessionID, lastRole })
+        return
+      }
 
       const agent = extracted.info.agent
-      if (!agent || !lcf.agents.includes(agent)) return
+      if (!agent || !lcf.agents.includes(agent)) {
+        await logger.info("Compacting: agent not in largeContextFallback.agents", { sessionID: input.sessionID, agent, agents: lcf.agents })
+        return
+      }
 
       if (currentModel?.providerID === original.providerID && currentModel?.modelID === original.modelID) {
         const parsed = parseModel(lcf.model)
@@ -346,6 +384,9 @@ export async function createPlugin(context: PluginInput): Promise<Hooks> {
       }
     },
     event: async ({ event }) => {
+      if ((event as any).type?.startsWith?.("session")) {
+        await logger.info("Session event received", { eventType: event.type, eventProps: JSON.stringify(event.properties).slice(0, 300) })
+      }
       if (event.type === "session.compacted") {
         const props = event.properties as { sessionID: string }
         const lcf = config.largeContextFallback
