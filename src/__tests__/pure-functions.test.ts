@@ -2,7 +2,6 @@ import { describe, it, expect, afterEach } from "vitest"
 import { parseModel, getFallbackChain } from "../config"
 import { classifyError } from "../decision"
 import {
-  isCooldownActive,
   activateCooldown,
   incrementBackoff,
   getBackoffLevel,
@@ -97,23 +96,23 @@ describe("getFallbackChain", () => {
 })
 
 describe("classifyError", () => {
-  it("immediate via pattern", () => {
-    expect(classifyError("quota exceeded", false)).toEqual(expect.objectContaining({ action: "immediate" }))
+  it("401 → immediate", () => {
+    expect(classifyError(401, false, false)).toEqual(expect.objectContaining({ action: "immediate", httpStatus: 401 }))
   })
-  it("retry via pattern", () => {
-    expect(classifyError("rate limit reached", false)).toEqual(expect.objectContaining({ action: "retry" }))
+  it("isRetryable=true → retry", () => {
+    expect(classifyError(500, true, false)).toEqual(expect.objectContaining({ action: "retry", isRetryable: true }))
   })
-  it("retry as default", () => {
-    expect(classifyError("something broke", false)).toEqual({ action: "retry" })
+  it("no status, no isRetryable → retry (default)", () => {
+    expect(classifyError(undefined, undefined, false)).toEqual({ action: "retry" })
   })
   it("ignore when cooldown active", () => {
-    expect(classifyError("quota exceeded", true)).toEqual({ action: "ignore" })
+    expect(classifyError(401, false, true)).toEqual({ action: "ignore" })
   })
   it("HTTP 429 → retry", () => {
-    expect(classifyError("429 Too Many Requests", false)).toEqual(expect.objectContaining({ action: "retry", httpStatus: 429 }))
+    expect(classifyError(429, undefined, false)).toEqual(expect.objectContaining({ action: "retry", httpStatus: 429 }))
   })
-  it("HTTP 401 → immediate", () => {
-    expect(classifyError("HTTP 401 Unauthorized", false)).toEqual(expect.objectContaining({ action: "immediate", httpStatus: 401 }))
+  it("HTTP 401 → immediate even when isRetryable", () => {
+    expect(classifyError(401, true, false)).toEqual(expect.objectContaining({ action: "immediate", httpStatus: 401 }))
   })
 })
 

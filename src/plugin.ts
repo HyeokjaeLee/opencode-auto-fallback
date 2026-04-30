@@ -200,18 +200,8 @@ async function handleImmediate(
   await tryFallbackChain(sessionID, chain, extracted.info.agent, extracted.parts, extracted.info.id, logger, context)
 }
 
-function hasErrorText(parts: any[]): string {
-  for (const part of parts) {
-    if (part.type === "text" && part.text) return part.text
-  }
-  return ""
-}
-
-function looksLikeError(text: string): boolean {
-  if (text.includes("Session Transcript")) return false
-  if (text.startsWith("[CONTEXT]:")) return false
-  const lower = text.toLowerCase()
-  return lower.includes("error") || lower.includes("failed") || lower.includes("unable")
+function findRetryPart(parts: any[]): any {
+  return parts.find((p: any) => p.type === "retry")
 }
 
 export async function createPlugin(context: PluginInput): Promise<Hooks> {
@@ -264,15 +254,19 @@ export async function createPlugin(context: PluginInput): Promise<Hooks> {
 
   return {
     "chat.message": async (input, output) => {
-      const text = hasErrorText(output.parts)
-      if (!text || !looksLikeError(text)) return
+      const retryPart = findRetryPart(output.parts)
+      if (!retryPart) return
 
-      const decision = classifyError(text, isCooldownActive(input.sessionID))
+      const statusCode: number | undefined = retryPart.error?.data?.statusCode
+      const isRetryable: boolean | undefined = retryPart.error?.data?.isRetryable
+
+      const decision = classifyError(statusCode, isRetryable, isCooldownActive(input.sessionID))
 
       if (decision.action === "immediate") {
         await logger.info("Immediate error", {
-          sessionID: input.sessionID, text: text.slice(0, 200),
-          httpStatus: decision.httpStatus, matchedPattern: decision.matchedPattern,
+          sessionID: input.sessionID,
+          httpStatus: decision.httpStatus,
+          isRetryable: decision.isRetryable,
         })
         await handleImmediate(input.sessionID, config, logger, context)
         return
@@ -280,8 +274,9 @@ export async function createPlugin(context: PluginInput): Promise<Hooks> {
 
       if (decision.action === "retry") {
         await logger.info("Retryable error", {
-          sessionID: input.sessionID, text: text.slice(0, 200),
-          httpStatus: decision.httpStatus, matchedPattern: decision.matchedPattern,
+          sessionID: input.sessionID,
+          httpStatus: decision.httpStatus,
+          isRetryable: decision.isRetryable,
         })
         await handleRetry(input.sessionID, config, logger, context)
       }

@@ -4,12 +4,13 @@ OpenCode plugin that automatically detects model errors and switches to a fallba
 
 ## Features
 
-- **Two-tier classification**: immediate fallback for quota/auth errors, exponential backoff retry for rate limits and transient failures
+- **Two-tier classification**: immediate fallback for auth errors, exponential backoff retry for rate limits and transient failures — detected via structured SDK error types, not text matching
 - **Fallback chain**: ordered list of fallback models per agent, with variant/reasoning/temperature support
 - **Per-model timed cooldown**: failed models are skipped until cooldown expires
 - **Default‑retry safety net**: any unrecognized error is treated as retryable
 - **Zero config startup**: auto-generates `fallback.json` with sensible defaults on first run
 - **Toast notifications**: terminal toasts when fallback is triggered
+- **Large context support**: automatically switches to a larger model when context fills up
 
 ## Installation
 
@@ -117,15 +118,14 @@ Each entry in a fallback chain can be a simple string or an object:
 
 ### Error Classification
 
-| Error type                  | Action                                      |
-| --------------------------- | ------------------------------------------- |
-| **HTTP 401/403** (auth)     | Immediate fallback                          |
-| **Quota exceeded, billing** | Immediate fallback                          |
-| **Model not found**         | Immediate fallback                          |
-| **HTTP 429** (rate limit)   | Backoff retry (2s → 4s → 8s…) then fallback |
-| **HTTP 5xx**                | Backoff retry then fallback                 |
-| **Overloaded, unavailable** | Backoff retry then fallback                 |
-| **Unknown errors**          | Backoff retry then fallback _(safety net)_  |
+The plugin detects errors through SDK's `RetryPart` (type: `"retry"`) in `output.parts`, which provides structured `statusCode` and `isRetryable` flags — no text pattern matching.
+
+| Error type                  | Detection                                      | Action                                      |
+| --------------------------- | ---------------------------------------------- | ------------------------------------------- |
+| **HTTP 401/402/403** (auth) | Status code in `IMMEDIATE_STATUS_CODES`        | Immediate fallback                          |
+| **Retryable errors**        | `isRetryable === true` from SDK                | Backoff retry (2s → 4s → 8s…) then fallback |
+| **HTTP 429/5xx**            | Status code in `RETRYABLE_STATUS_CODES`        | Backoff retry then fallback                 |
+| **Unknown errors**          | Default classification                         | Backoff retry then fallback _(safety net)_  |
 
 ### Retry Flow
 
@@ -163,7 +163,7 @@ bun install
 # Type check
 tsc --noEmit
 
-# Run tests (67 tests)
+# Run tests (58 tests)
 bun vitest run
 
 # Bump version (CI auto-publishes)

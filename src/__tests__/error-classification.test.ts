@@ -1,58 +1,96 @@
 import { describe, it, expect } from "vitest"
 import { classifyError } from "../decision"
-import { matchImmediatePattern, matchRetryablePattern, extractHttpStatus } from "../matcher"
 
-describe("extractHttpStatus", () => {
-  it("extracts 429", () => expect(extractHttpStatus("Error 429: rate limit")).toBe(429))
-  it("extracts 503", () => expect(extractHttpStatus("503 Service Unavailable")).toBe(503))
-  it("extracts 401", () => expect(extractHttpStatus("HTTP 401 Unauthorized")).toBe(401))
-  it("ignores 200", () => expect(extractHttpStatus("200 OK")).toBeUndefined())
-  it("undefined for no status", () => expect(extractHttpStatus("something broke")).toBeUndefined())
-})
+describe("classifyError (structured)", () => {
+  describe("cooldown active → ignore", () => {
+    it("ignores regardless of status code", () => {
+      expect(classifyError(401, false, true)).toEqual({ action: "ignore" })
+      expect(classifyError(429, true, true)).toEqual({ action: "ignore" })
+      expect(classifyError(undefined, undefined, true)).toEqual({ action: "ignore" })
+    })
+  })
 
-describe("matchImmediatePattern", () => {
-  it("quota exceeded", () => expect(matchImmediatePattern("Error: quota exceeded")).toBeTruthy())
-  it("exceeded your", () => expect(matchImmediatePattern("You exceeded your quota")).toBeTruthy())
-  it("authentication", () => expect(matchImmediatePattern("Authentication failed")).toBeTruthy())
-  it("invalid api key", () => expect(matchImmediatePattern("Invalid API key provided")).toBeTruthy())
-  it("no match on rate limit", () => expect(matchImmediatePattern("rate limit reached")).toBeUndefined())
-  it("no match on generic", () => expect(matchImmediatePattern("something went wrong")).toBeUndefined())
-})
+  describe("HTTP 401/402/403 → immediate", () => {
+    it("401 → immediate", () => {
+      expect(classifyError(401, false, false)).toEqual(
+        expect.objectContaining({ action: "immediate", httpStatus: 401 }),
+      )
+    })
+    it("402 → immediate", () => {
+      expect(classifyError(402, false, false)).toEqual(
+        expect.objectContaining({ action: "immediate", httpStatus: 402 }),
+      )
+    })
+    it("403 → immediate", () => {
+      expect(classifyError(403, true, false)).toEqual(
+        expect.objectContaining({ action: "immediate", httpStatus: 403 }),
+      )
+    })
+    it("immediate takes priority over isRetryable", () => {
+      // Even if SDK says retryable, 401 is always immediate
+      expect(classifyError(401, true, false)).toEqual(
+        expect.objectContaining({ action: "immediate", httpStatus: 401 }),
+      )
+    })
+  })
 
-describe("matchRetryablePattern", () => {
-  it("rate limit", () => expect(matchRetryablePattern("rate limit reached")).toBeTruthy())
-  it("too many requests", () => expect(matchRetryablePattern("Too many requests")).toBeTruthy())
-  it("service unavailable", () => expect(matchRetryablePattern("503 Service Unavailable")).toBeTruthy())
-  it("no match on auth", () => expect(matchRetryablePattern("unauthorized")).toBeUndefined())
-})
+  describe("isRetryable === true → retry", () => {
+    it("retryable with status code", () => {
+      expect(classifyError(500, true, false)).toEqual(
+        expect.objectContaining({ action: "retry", httpStatus: 500, isRetryable: true }),
+      )
+    })
+    it("retryable without status code", () => {
+      expect(classifyError(undefined, true, false)).toEqual(
+        expect.objectContaining({ action: "retry", isRetryable: true }),
+      )
+    })
+    it("retryable with non-standard status code", () => {
+      expect(classifyError(418, true, false)).toEqual(
+        expect.objectContaining({ action: "retry", isRetryable: true }),
+      )
+    })
+  })
 
-describe("classifyError", () => {
-  it("HTTP 401 → immediate", () => {
-    expect(classifyError("HTTP 401 Unauthorized", false)).toEqual(expect.objectContaining({ action: "immediate", httpStatus: 401 }))
+  describe("HTTP 429/5xx → retry", () => {
+    it("429 → retry", () => {
+      expect(classifyError(429, undefined, false)).toEqual(
+        expect.objectContaining({ action: "retry", httpStatus: 429 }),
+      )
+    })
+    it("500 → retry", () => {
+      expect(classifyError(500, undefined, false)).toEqual(
+        expect.objectContaining({ action: "retry", httpStatus: 500 }),
+      )
+    })
+    it("503 → retry", () => {
+      expect(classifyError(503, undefined, false)).toEqual(
+        expect.objectContaining({ action: "retry", httpStatus: 503 }),
+      )
+    })
+    it("529 → retry", () => {
+      expect(classifyError(529, undefined, false)).toEqual(
+        expect.objectContaining({ action: "retry", httpStatus: 529 }),
+      )
+    })
   })
-  it("HTTP 403 → immediate", () => {
-    expect(classifyError("403 Forbidden", false)).toEqual(expect.objectContaining({ action: "immediate", httpStatus: 403 }))
+
+  describe("isRetryable === false with non-immediate status → retry (default)", () => {
+    it("non-retryable with unknown status code defaults to retry", () => {
+      expect(classifyError(418, false, false)).toEqual(
+        expect.objectContaining({ action: "retry", httpStatus: 418, isRetryable: false }),
+      )
+    })
+    it("non-retryable with no status code defaults to retry", () => {
+      expect(classifyError(undefined, false, false)).toEqual(
+        expect.objectContaining({ action: "retry", isRetryable: false }),
+      )
+    })
   })
-  it("HTTP 429 → retry", () => {
-    expect(classifyError("429 Too Many Requests", false)).toEqual(expect.objectContaining({ action: "retry", httpStatus: 429 }))
-  })
-  it("HTTP 503 → retry", () => {
-    expect(classifyError("503 Service Unavailable", false)).toEqual(expect.objectContaining({ action: "retry", httpStatus: 503 }))
-  })
-  it("quota exceeded → immediate", () => {
-    expect(classifyError("Error: quota exceeded", false)).toEqual(expect.objectContaining({ action: "immediate" }))
-  })
-  it("rate limit → retry", () => {
-    expect(classifyError("rate limit reached", false)).toEqual(expect.objectContaining({ action: "retry" }))
-  })
-  it("unknown → retry (default)", () => {
-    expect(classifyError("something went wrong", false)).toEqual({ action: "retry" })
-  })
-  it("cooldown → ignore", () => {
-    expect(classifyError("quota exceeded", true)).toEqual({ action: "ignore" })
-    expect(classifyError("429 error", true)).toEqual({ action: "ignore" })
-  })
-  it("HTTP status takes priority over pattern", () => {
-    expect(classifyError("401 rate limit issue", false)).toEqual(expect.objectContaining({ action: "immediate", httpStatus: 401 }))
+
+  describe("default → retry (safety net)", () => {
+    it("no status, no isRetryable → retry", () => {
+      expect(classifyError(undefined, undefined, false)).toEqual({ action: "retry" })
+    })
   })
 })

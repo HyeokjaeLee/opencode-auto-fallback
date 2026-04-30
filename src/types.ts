@@ -39,7 +39,7 @@ export type ErrorClass = "immediate" | "retry" | "ignore"
 export interface FallbackDecision {
   action: ErrorClass
   httpStatus?: number
-  matchedPattern?: string
+  isRetryable?: boolean
 }
 
 export interface FallbackConfig {

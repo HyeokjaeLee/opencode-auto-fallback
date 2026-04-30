@@ -58,3 +58,23 @@ export function createMockMessages(opts: {
     },
   ]
 }
+
+export function createMockRetryPart(opts: {
+  statusCode?: number
+  isRetryable?: boolean
+  message?: string
+}) {
+  return {
+    id: "retry-part-1",
+    type: "retry",
+    attempt: 1,
+    error: {
+      name: "APIError",
+      data: {
+        statusCode: opts.statusCode,
+        isRetryable: opts.isRetryable,
+        message: opts.message ?? "API error occurred",
+      },
+    },
+  }
+}
