@@ -8,6 +8,7 @@ const currentModelSessions = new Map<string, { providerID: string; modelID: stri
 const sessionCooldownModel = new Map<string, { providerID: string; modelID: string }>()
 const largeContextPhase = new Map<string, LargeContextPhase>()
 const modelContextLimits = new Map<string, number>()
+const sessionOriginalAgent = new Map<string, string>()
 
 export function setActiveFallbackParams(sessionID: string, model: FallbackModel): void {
   activeFallbackParams.set(sessionID, model)
@@ -84,12 +85,23 @@ export function deleteSessionCooldownModel(sessionID: string): void {
   sessionCooldownModel.delete(sessionID)
 }
 
+export function setSessionOriginalAgent(sessionID: string, agent: string): void {
+  if (!sessionOriginalAgent.has(sessionID)) {
+    sessionOriginalAgent.set(sessionID, agent)
+  }
+}
+
+export function getSessionOriginalAgent(sessionID: string): string | undefined {
+  return sessionOriginalAgent.get(sessionID)
+}
+
 export function cleanupSession(sessionID: string): void {
   largeContextSessions.delete(sessionID)
   currentModelSessions.delete(sessionID)
   sessionCooldownModel.delete(sessionID)
   largeContextPhase.delete(sessionID)
   activeFallbackParams.delete(sessionID)
+  sessionOriginalAgent.delete(sessionID)
 }
 
 
