@@ -39,3 +39,9 @@ export const TOAST_DURATION_MS = 5_000
 
 /** Duration for long/important toast notifications (ms) */
 export const TOAST_DURATION_LONG_MS = 8_000
+
+/** Timeout for forked session execution (ms) */
+export const FORK_TIMEOUT_MS = 300_000
+
+/** Delay before injecting fork result into main session (ms) */
+export const FORK_INJECT_DELAY_MS = 500

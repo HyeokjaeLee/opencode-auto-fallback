@@ -93,6 +93,18 @@ export interface MessageWithParts {
   parts: MessagePart[]
 }
 
+export type ForkStatus = "forking" | "running" | "completed" | "failed" | "injecting" | "done"
+
+export interface ForkTrackingEntry {
+  forkedSessionID: string
+  mainSessionID: string
+  status: ForkStatus
+  agent: string
+  largeModel: FallbackModel
+  originalModel: ResolvedModel
+  createdAt: number
+}
+
 export interface ToastOptions {
   title?: string
   message: string

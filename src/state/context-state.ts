@@ -1,4 +1,4 @@
-import type { FallbackModel } from "../types"
+import type { FallbackModel, ForkTrackingEntry, ForkStatus } from "../types"
 
 type LargeContextPhase = "active" | "summarizing"
 
@@ -9,6 +9,7 @@ const sessionCooldownModel = new Map<string, { providerID: string; modelID: stri
 const largeContextPhase = new Map<string, LargeContextPhase>()
 const modelContextLimits = new Map<string, number>()
 const sessionOriginalAgent = new Map<string, string>()
+const forkTracking = new Map<string, ForkTrackingEntry>()
 
 export function setActiveFallbackParams(sessionID: string, model: FallbackModel): void {
   activeFallbackParams.set(sessionID, model)
@@ -95,6 +96,39 @@ export function getSessionOriginalAgent(sessionID: string): string | undefined {
   return sessionOriginalAgent.get(sessionID)
 }
 
+export function setForkTracking(entry: ForkTrackingEntry): void {
+  forkTracking.set(entry.forkedSessionID, entry)
+}
+
+export function getForkTracking(forkedSessionID: string): ForkTrackingEntry | undefined {
+  return forkTracking.get(forkedSessionID)
+}
+
+export function getForkByMainSession(mainSessionID: string): ForkTrackingEntry | undefined {
+  for (const entry of forkTracking.values()) {
+    if (entry.mainSessionID === mainSessionID) return entry
+  }
+  return undefined
+}
+
+export function updateForkStatus(forkedSessionID: string, status: ForkStatus): void {
+  const entry = forkTracking.get(forkedSessionID)
+  if (entry) entry.status = status
+}
+
+export function deleteForkTracking(forkedSessionID: string): void {
+  forkTracking.delete(forkedSessionID)
+}
+
+export function hasActiveFork(mainSessionID: string): boolean {
+  for (const entry of forkTracking.values()) {
+    if (entry.mainSessionID === mainSessionID && (entry.status === "forking" || entry.status === "running")) {
+      return true
+    }
+  }
+  return false
+}
+
 export function cleanupSession(sessionID: string): void {
   largeContextSessions.delete(sessionID)
   currentModelSessions.delete(sessionID)
@@ -102,6 +136,12 @@ export function cleanupSession(sessionID: string): void {
   largeContextPhase.delete(sessionID)
   activeFallbackParams.delete(sessionID)
   sessionOriginalAgent.delete(sessionID)
+  // Clean up fork tracking: remove entries keyed by forked session ID,
+  // or remove all fork entries whose main session matches
+  forkTracking.delete(sessionID)
+  for (const [forkedID, entry] of forkTracking) {
+    if (entry.mainSessionID === sessionID) forkTracking.delete(forkedID)
+  }
 }
 
 

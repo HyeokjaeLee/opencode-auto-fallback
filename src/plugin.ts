@@ -45,7 +45,10 @@ import {
   cleanupSession,
   setSessionOriginalAgent,
   getSessionOriginalAgent,
+  hasActiveFork,
+  getForkTracking,
 } from "./state/context-state"
+import { forkSessionForLargeContext, injectForkResult } from "./session-fork"
 
 // tui is available at runtime but not typed in the SDK
 
@@ -475,57 +478,62 @@ export async function createPlugin(context: PluginInput): Promise<Hooks> {
         return
       }
 
-      await logger.info("Compacting: switching to large context model, continuing without revert", {
+      await logger.info("Compacting: switching to large context model via fork", {
         sessionID: input.sessionID, agent, largeModel: lcf.model,
         fromModel: currentModel ? `${currentModel.providerID}/${currentModel.modelID}` : "unknown",
       })
       if (agent) setSessionOriginalAgent(input.sessionID, agent)
-      await abortSession(input.sessionID, context)
-      setLargeContextPhase(input.sessionID, "active")
-      setActiveFallbackParams(input.sessionID, { providerID: parsed.providerID, modelID: parsed.modelID })
-      let ok: boolean
-      try {
-        await context.client.session.prompt({
-          path: { id: input.sessionID },
-          body: {
-            model: { providerID: parsed.providerID, modelID: parsed.modelID },
-            agent,
-            parts: [{ type: "text", text: "Continue the interrupted work from the existing conversation context. Do not restart or repeat the previous request." }],
-          },
+
+      // Check if there's already an active fork for this session
+      if (hasActiveFork(input.sessionID)) {
+        await logger.info("Compacting: active fork exists, skipping", {
+          sessionID: input.sessionID,
         })
-        ok = true
-      } catch (err) {
-        await logger.warn("Compacting: large model prompt failed", {
-          sessionID: input.sessionID, largeModel: lcf.model,
-          error: err instanceof Error ? err.message : String(err),
-        })
-        ok = false
-      }
-      if (!ok) {
-        deleteLargeContextPhase(input.sessionID)
-        clearActiveFallbackParams(input.sessionID)
-        await logger.warn("Compacting: large model unavailable, reverting to normal compaction", {
-          sessionID: input.sessionID, largeModel: lcf.model,
-        })
-        const rescueModel: { providerID: string; modelID: string } =
-          currentModel ?? { providerID: original.providerID, modelID: original.modelID }
-        const rescueOk = await revertAndPrompt(
-          input.sessionID, agent, extracted.parts, extracted.info.id,
-          rescueModel, logger, context,
-        )
-        if (!rescueOk) {
-          await logger.error("Compacting: failed to restore session after large model switch failure", {
-            sessionID: input.sessionID,
-          })
-        }
         return
       }
-      await showToastSafely(context, {
-        title: "Large Context Model",
-        message: `Switched to ${lcf.model} for large context`,
-        variant: "info",
-        duration: TOAST_DURATION_MS,
-      }, logger)
+
+      const forkResult = await forkSessionForLargeContext(
+        input.sessionID,
+        agent,
+        { providerID: parsed.providerID, modelID: parsed.modelID },
+        { providerID: original.providerID, modelID: original.modelID },
+        context,
+        logger,
+      )
+
+      if (forkResult.ok) {
+        setLargeContextPhase(input.sessionID, "active")
+        await showToastSafely(context, {
+          title: "Large Context Model (forked)",
+          message: `Forked to ${lcf.model} for large context`,
+          variant: "info",
+          duration: TOAST_DURATION_MS,
+        }, logger)
+        await logger.info("Compacting: fork created successfully", {
+          sessionID: input.sessionID,
+          forkedSessionID: forkResult.forkedSessionID,
+        })
+        return
+      }
+
+      // Fallback: fork failed, abort and revert with original model
+      await logger.warn("Compacting: fork failed, reverting to abort+rescue path", {
+        sessionID: input.sessionID, error: forkResult.error,
+      })
+      await abortSession(input.sessionID, context)
+      deleteLargeContextPhase(input.sessionID)
+      clearActiveFallbackParams(input.sessionID)
+      const rescueModel: { providerID: string; modelID: string } =
+        currentModel ?? { providerID: original.providerID, modelID: original.modelID }
+      const rescueOk = await revertAndPrompt(
+        input.sessionID, agent, extracted.parts, extracted.info.id,
+        rescueModel, logger, context,
+      )
+      if (!rescueOk) {
+        await logger.error("Compacting: failed to restore session after fork failure", {
+          sessionID: input.sessionID,
+        })
+      }
     },
     event: async ({ event }) => {
       if (event.type === "session.error") {
@@ -670,6 +678,11 @@ export async function createPlugin(context: PluginInput): Promise<Hooks> {
             sessionID: props.sessionID,
           })
           deleteLargeContextPhase(props.sessionID)
+        }
+
+        const forkEntry = getForkTracking(props.sessionID)
+        if (forkEntry && forkEntry.status === "running") {
+          await injectForkResult(props.sessionID, forkEntry.mainSessionID, forkEntry.agent, context, logger)
         }
       }
       if (event.type === "session.status") {
