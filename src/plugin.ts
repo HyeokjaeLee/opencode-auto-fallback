@@ -233,6 +233,9 @@ export async function createPlugin(context: PluginInput): Promise<Hooks> {
   checkForUpdates(currentVersion).then(async (info) => {
     if (!info.hasUpdate) return
 
+    const { saveNotifiedVersion } = await import("./update-checker")
+    saveNotifiedVersion(info.latest)
+
     await logger.info(`Update available: ${info.current} → ${info.latest}`)
     await showToastSafely(context, {
       title: "Updating Plugin",
