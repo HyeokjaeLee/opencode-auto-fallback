@@ -413,7 +413,20 @@ export async function createPlugin(context: PluginInput): Promise<Hooks> {
       )
       if (!ok) {
         largeContextPhase.delete(input.sessionID)
-        await logger.error("Compacting: failed to switch to large context model", { sessionID: input.sessionID, largeModel: lcf.model })
+        await logger.warn("Compacting: large model unavailable, reverting to normal compaction", {
+          sessionID: input.sessionID, largeModel: lcf.model,
+        })
+        const rescueModel = currentModel ?? original
+        const rescueOk = await revertAndPrompt(
+          input.sessionID, agent, extracted.parts, extracted.info.id,
+          { providerID: rescueModel.providerID, modelID: rescueModel.modelID },
+          logger, context,
+        )
+        if (!rescueOk) {
+          await logger.error("Compacting: failed to restore session after large model switch failure", {
+            sessionID: input.sessionID,
+          })
+        }
         return
       }
       await showToastSafely(context, {
