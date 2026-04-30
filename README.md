@@ -59,6 +59,32 @@ On first run, a default config is auto-created at `~/.config/opencode/fallback.j
 | `maxRetries`      | `2`      | Backoff retry attempts before switching to fallback chain                                                                                           |
 | `logging`         | `false`  | Enable file-based logging to `~/.local/share/opencode/log/fallback.log`                                                                             |
 
+#### Using with oh-my-openagent
+
+When an agent is provided by `oh-my-openagent`, the runtime agent name can differ from the key in `oh-my-openagent.json`. Configure fallback with the name that appears in OpenCode session logs, normalized by removing whitespace and ignoring case.
+
+For example, if logs show `agent=​Sisyphus - Ultraworker`, configure it as `sisyphus-ultraworker`:
+
+```jsonc
+{
+  "agentFallbacks": {
+    "sisyphus-ultraworker": [
+      {
+        "model": "opencode-go/deepseek-v4-pro",
+        "variant": "high"
+      }
+    ],
+    "hephaestus": ["zai-coding-plan/glm-5.1"]
+  },
+  "largeContextFallback": {
+    "agents": ["sisyphus-ultraworker", "hephaestus"],
+    "model": "opencode-go/deepseek-v4-pro"
+  }
+}
+```
+
+Agent matching is exact after normalization: `Sisyphus - Ultraworker`, `sisyphus-ultraworker`, and `SISYPHUSULTRAWORKER` match the same entry, but `sisyphus` does not automatically match `Sisyphus - Ultraworker`.
+
 ### Auto Updates
 
 The plugin checks for updates on every startup and installs them automatically — no manual intervention needed.
