@@ -101,7 +101,7 @@ opencode-auto-fallback/
 - **Vitest**: zero-config, tests in `src/__tests__/*.test.ts`
 - **Mock pattern**: `createMockContext(overrides?)` factory, `_forTesting` export for white-box access
 - **Config auto-create**: `loadConfig()` writes default to `~/.config/opencode/fallback.json` if missing
-- **Commit style**: Conventional Commits (`feat:`, `fix:`, `test:`, `ci:`)
+- **Commit style**: Conventional Commits (`feat:`, `fix:`, `test:`, `ci:`) — **messages must be in English**
 - **Versioning**: `npm version patch --no-git-tag-version` → GitHub Actions release → npm publish
 
 ## KNOWN LIMITATIONS

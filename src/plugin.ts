@@ -422,7 +422,13 @@ export async function createPlugin(context: PluginInput): Promise<Hooks> {
         return
       }
 
-      const agent = extracted.info.agent
+      // Use the originally tracked agent if available, falling back to extracted info
+      // (extracted.info.agent may point to a synthetic "Continue" message with wrong agent)
+      const agent = getSessionOriginalAgent(input.sessionID) ?? extracted.info.agent
+      if (!agent) {
+        await logger.info("Compacting: no agent found for session", { sessionID: input.sessionID })
+        return
+      }
       if (!isLargeContextAgent(agent, lcf.agents)) {
         await logger.info("Compacting: agent not in largeContextFallback.agents", { sessionID: input.sessionID, agent, agents: lcf.agents })
         return
