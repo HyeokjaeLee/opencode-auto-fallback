@@ -637,6 +637,18 @@ export async function createPlugin(context: PluginInput): Promise<Hooks> {
           return
         }
 
+        deleteLargeContextPhase(props.sessionID)
+
+        // If there's an active fork, don't re-prompt the original model.
+        // The forked session is already handling the work; main session should wait.
+        const activeFork = hasActiveFork(props.sessionID)
+        if (activeFork) {
+          await logger.info("Compacted: active fork in progress, main session waits for fork result", {
+            sessionID: props.sessionID,
+          })
+          return
+        }
+
         const { extracted } = await fetchSessionData(props.sessionID, context, logger)
         if (!extracted) {
           await logger.info("Compacted: no extracted user message", { sessionID: props.sessionID })
@@ -654,7 +666,6 @@ export async function createPlugin(context: PluginInput): Promise<Hooks> {
         await logger.info("Compacted: switching back to original model", {
           sessionID: props.sessionID, original,
         })
-        deleteLargeContextPhase(props.sessionID)
         const ok = await revertAndPrompt(
           props.sessionID, agent, extracted.parts, extracted.info.id,
           original, logger, context,
