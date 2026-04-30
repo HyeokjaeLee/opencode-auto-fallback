@@ -71,15 +71,15 @@ For example, if logs show `agent=​Sisyphus - Ultraworker`, configure it as `si
     "sisyphus-ultraworker": [
       {
         "model": "opencode-go/deepseek-v4-pro",
-        "variant": "high"
-      }
+        "variant": "high",
+      },
     ],
-    "hephaestus": ["zai-coding-plan/glm-5.1"]
+    "hephaestus-deepagent": ["zai-coding-plan/glm-5.1"],
   },
   "largeContextFallback": {
-    "agents": ["sisyphus-ultraworker", "hephaestus"],
-    "model": "opencode-go/deepseek-v4-pro"
-  }
+    "agents": ["sisyphus-ultraworker", "hephaestus-deepagent"],
+    "model": "opencode-go/deepseek-v4-pro",
+  },
 }
 ```
 
