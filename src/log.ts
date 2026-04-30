@@ -3,8 +3,9 @@ import { join } from "node:path"
 import { homedir } from "node:os"
 
 const LOG_DIR = join(
-  process.env.XDG_CONFIG_HOME ?? join(homedir(), ".config"),
-  "opencode"
+  process.env.XDG_DATA_HOME ?? join(homedir(), ".local", "share"),
+  "opencode",
+  "log"
 )
 const LOG_FILE = join(LOG_DIR, "fallback.log")
 
