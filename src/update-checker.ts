@@ -78,8 +78,8 @@ function findInstallDir(): string | null {
 }
 
 function detectPackageManager(dir: string): { bin: string; args: string[] } {
-  if (existsSync(join(dir, "bun.lock"))) return { bin: "bun", args: ["update", PACKAGE_NAME] }
-  return { bin: "npm", args: ["update", PACKAGE_NAME] }
+  if (existsSync(join(dir, "bun.lock"))) return { bin: "bun", args: ["add", `${PACKAGE_NAME}@latest`] }
+  return { bin: "npm", args: ["install", `${PACKAGE_NAME}@latest`] }
 }
 
 export function tryInstallUpdate(): Promise<boolean> {
