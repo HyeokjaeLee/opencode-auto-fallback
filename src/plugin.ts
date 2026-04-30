@@ -277,11 +277,27 @@ export async function createPlugin(context: PluginInput): Promise<Hooks> {
         (input as any).experimental = {}
       }
       input.experimental!.chatMaxRetries = 0
-      await logger.info("Disabled opencode built-in retry (chatMaxRetries = 0)")
+      await logger.info("Disabled opencode built-in retry", {
+        chatMaxRetries: input.experimental!.chatMaxRetries,
+        experimentalKeys: Object.keys(input.experimental ?? {}),
+      })
     },
     "chat.message": async (input, output) => {
+      const partTypes = (output.parts ?? []).map((p: any) => p.type)
+      await logger.info("chat.message hook fired", {
+        sessionID: input.sessionID,
+        partTypes,
+        partCount: (output.parts ?? []).length,
+      })
+
       const retryPart = findRetryPart(output.parts)
-      if (!retryPart) return
+      if (!retryPart) {
+        await logger.info("No retry part found in output.parts — skipping", {
+          sessionID: input.sessionID,
+          partTypes,
+        })
+        return
+      }
 
       const statusCode: number | undefined = retryPart.error?.data?.statusCode
       const isRetryable: boolean | undefined = retryPart.error?.data?.isRetryable
