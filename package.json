@@ -1,6 +1,6 @@
 {
   "name": "opencode-auto-fallback",
-  "version": "0.2.6",
+  "version": "0.2.7",
   "description": "OpenCode plugin that automatically switches to a fallback model when rate limits are hit",
   "type": "module",
   "main": "index.ts",

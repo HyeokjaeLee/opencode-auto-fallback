@@ -65,7 +65,6 @@ export async function checkForUpdates(currentVersion: string): Promise<UpdateInf
 
 function findInstallDirs(): string[] {
   const candidates = [
-    join(homedir(), ".bun", "install", "global"),
     join(homedir(), ".cache", "opencode", "packages"),
     join(homedir(), ".config", "opencode"),
   ]
