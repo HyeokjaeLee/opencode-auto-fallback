@@ -1,5 +1,5 @@
 import type { FallbackDecision } from "./types"
-import { IMMEDIATE_STATUS_CODES, RETRYABLE_STATUS_CODES } from "./constants"
+import { IMMEDIATE_STATUS_CODES, RETRYABLE_STATUS_CODES, RATE_LIMIT_PATTERNS } from "./constants"
 
 export { type FallbackDecision }
 
@@ -27,4 +27,9 @@ export function classifyError(
   }
 
   return { action: "retry", httpStatus: statusCode, isRetryable }
+}
+
+export function isRateLimitMessage(message: string): boolean {
+  const lower = message.toLowerCase()
+  return RATE_LIMIT_PATTERNS.some(pattern => lower.includes(pattern))
 }

@@ -1,6 +1,6 @@
 import { describe, it, expect, afterEach } from "vitest"
 import { parseModel, getFallbackChain, normalizeAgentName } from "../config"
-import { classifyError } from "../decision"
+import { classifyError, isRateLimitMessage } from "../decision"
 import {
   activateCooldown,
   incrementBackoff,
@@ -231,5 +231,25 @@ describe("session state - backoff", () => {
     activateCooldown(sid, -1)
     resetIfExpired(sid)
     expect(getBackoffLevel(sid)).toBe(0)
+  })
+})
+
+describe("isRateLimitMessage", () => {
+  it("matches rate-limit messages", () => {
+    expect(isRateLimitMessage("The usage limit has been reached")).toBe(true)
+    expect(isRateLimitMessage("rate limit exceeded")).toBe(true)
+    expect(isRateLimitMessage("Your credit balance is too low")).toBe(true)
+    expect(isRateLimitMessage("service overloaded, try again")).toBe(true)
+  })
+
+  it("is case-insensitive", () => {
+    expect(isRateLimitMessage("RATE LIMIT EXCEEDED")).toBe(true)
+    expect(isRateLimitMessage("Usage Limit has been Reached")).toBe(true)
+  })
+
+  it("does not match unrelated messages", () => {
+    expect(isRateLimitMessage("invalid API key")).toBe(false)
+    expect(isRateLimitMessage("model not found")).toBe(false)
+    expect(isRateLimitMessage("connection timeout")).toBe(false)
   })
 })

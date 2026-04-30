@@ -1,7 +1,7 @@
 import type { Hooks, PluginInput } from "@opencode-ai/plugin"
 import type { FallbackConfig, FallbackModel } from "./types"
 import { getFallbackChain, loadConfig, normalizeAgentName, parseModel } from "./config"
-import { classifyError } from "./decision"
+import { classifyError, isRateLimitMessage } from "./decision"
 import { BACKOFF_BASE_MS } from "./constants"
 import { createLogger } from "./log"
 import {
@@ -598,7 +598,36 @@ export async function createPlugin(context: PluginInput): Promise<Hooks> {
         }
       }
       if (event.type === "session.status") {
-        const props = event.properties as { sessionID: string; status: { type: string } }
+        const props = event.properties as {
+          sessionID: string
+          status: {
+            type: "idle" | "retry" | "busy"
+            attempt?: number
+            message?: string
+            next?: number
+          }
+        }
+
+        if (props.status.type === "retry" && props.status.message) {
+          if (isRateLimitMessage(props.status.message)) {
+            await logger.info("Rate-limit retry intercepted via session.status", {
+              sessionID: props.sessionID,
+              message: props.status.message,
+              attempt: props.status.attempt,
+              cooldownActive: isCooldownActive(props.sessionID),
+            })
+
+            if (isCooldownActive(props.sessionID)) {
+              await logger.info("Retry event during cooldown, ignoring", { sessionID: props.sessionID })
+              return
+            }
+
+            await abortSession(props.sessionID, context)
+            await handleImmediate(props.sessionID, config, logger, context)
+            return
+          }
+        }
+
         if (props.status.type === "idle" && resetIfExpired(props.sessionID)) {
           const removed = cleanupExpired()
           await logger.info("Cooldown expired, state reset", { sessionID: props.sessionID, expiredCooldowns: removed })
