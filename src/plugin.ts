@@ -385,6 +385,18 @@ export async function createPlugin(context: PluginInput): Promise<PluginHooks> {
             }
           }
         }
+
+        // DIAGNOSTIC: Log if this is a fork session — what model is it ACTUALLY running?
+        if (getForkTracking(input.sessionID)) {
+          const lcfKey = lcf ? `${parseModel(lcf.model).providerID}/${parseModel(lcf.model).modelID}` : "none"
+          await logger.info("🔍 FORK SESSION: chat.params", {
+            sessionID: input.sessionID,
+            actualModel: `${input.model.providerID}/${input.model.id}`,
+            actualLimit: ctxLimit ?? "unknown",
+            configuredLargeModel: lcfKey,
+            isLargeModel: lcf ? `${input.model.providerID}/${input.model.id}` === lcfKey : false,
+          })
+        }
       }
 
       const fallback = getAndClearFallbackParams(input.sessionID)
@@ -411,6 +423,29 @@ export async function createPlugin(context: PluginInput): Promise<PluginHooks> {
     },
     "experimental.session.compacting": async (input, _output) => {
       await logger.info("Compacting hook fired", { sessionID: input.sessionID })
+
+      // DIAGNOSTIC: Is this a fork session? Log all context info.
+      const forkEntry = getForkTracking(input.sessionID)
+      if (forkEntry) {
+        const curModel = getCurrentModel(input.sessionID)
+        const ctxModel = curModel ? `${curModel.providerID}/${curModel.modelID}` : "none"
+        const lcfModel = config.largeContextFallback
+          ? `${parseModel(config.largeContextFallback.model).providerID}/${parseModel(config.largeContextFallback.model).modelID}`
+          : "none"
+        const largeCtxLimit = getModelContextLimit(lcfModel) ?? "unknown"
+        const curCtxLimit = curModel ? getModelContextLimit(`${curModel.providerID}/${curModel.modelID}`) : "unknown"
+        await logger.info("🔍 FORK SESSION: compacting hook fired", {
+          sessionID: input.sessionID,
+          forkStatus: forkEntry.status,
+          mainSessionID: forkEntry.mainSessionID,
+          currentModel: ctxModel,
+          isLargeModel: ctxModel === lcfModel,
+          currentModelLimit: curCtxLimit,
+          largeModelLimit: largeCtxLimit,
+          agent: forkEntry.agent,
+        })
+      }
+
       const lcf = config.largeContextFallback
       if (!lcf) {
         await logger.info("Compacting: no largeContextFallback config, skipping")
@@ -455,8 +490,17 @@ export async function createPlugin(context: PluginInput): Promise<PluginHooks> {
         return
       }
 
-      if (hasActiveFork(input.sessionID) || getForkTracking(input.sessionID)) {
-        await logger.info("Compacting: active fork or fork session exists, skipping", {
+      if (forkEntry) {
+        await logger.info("🔍 FORK SESSION: compacting hook exiting via forkEntry check (isLargeModel was false)", {
+          sessionID: input.sessionID,
+          currentModel: currentModel ? `${currentModel.providerID}/${currentModel.modelID}` : "none",
+          largeModel: `${parsed.providerID}/${parsed.modelID}`,
+        })
+        return
+      }
+
+      if (hasActiveFork(input.sessionID)) {
+        await logger.info("Compacting: active fork exists, skipping", {
           sessionID: input.sessionID,
         })
         return
@@ -644,6 +688,11 @@ export async function createPlugin(context: PluginInput): Promise<PluginHooks> {
       if (event.type === "session.compacted") {
         const props = event.properties as { sessionID: string }
         await logger.info("Compacted event received", { sessionID: props.sessionID })
+        if (getForkTracking(props.sessionID)) {
+          await logger.info("🔍 FORK SESSION: was compacted", {
+            sessionID: props.sessionID,
+          })
+        }
         const lcf = config.largeContextFallback
         if (!lcf) {
           await logger.info("Compacted: no largeContextFallback config, skipping", { sessionID: props.sessionID })
@@ -715,6 +764,39 @@ export async function createPlugin(context: PluginInput): Promise<PluginHooks> {
       }
       if (event.type === "session.idle") {
         const props = event.properties as { sessionID: string }
+
+        // DIAGNOSTIC: Log fork session completion with token usage
+        if (getForkTracking(props.sessionID)) {
+          try {
+            const msgResp = await context.client.session.messages({ path: { id: props.sessionID } })
+            const raw = (msgResp.data ?? []) as Array<{ info: { role: string; tokens?: { input: number; output: number } } }>
+            const lastAsst = [...raw].reverse().find(m => m.info.role === "assistant")
+            if (lastAsst?.info?.tokens) {
+              const curModel = getCurrentModel(props.sessionID)
+              const modelKey = curModel ? `${curModel.providerID}/${curModel.modelID}` : "unknown"
+              const limit = getModelContextLimit(modelKey)
+              await logger.info("🔍 FORK SESSION: idle with token info", {
+                sessionID: props.sessionID,
+                model: modelKey,
+                modelLimit: limit ?? "unknown",
+                tokensInput: lastAsst.info.tokens.input,
+                tokensOutput: lastAsst.info.tokens.output,
+                estimatedUsage: `${lastAsst.info.tokens.input + lastAsst.info.tokens.output}`,
+                usagePct: limit ? `${((lastAsst.info.tokens.input + lastAsst.info.tokens.output) / limit * 100).toFixed(1)}%` : "unknown",
+              })
+            } else {
+              await logger.info("🔍 FORK SESSION: idle (no token info available)", {
+                sessionID: props.sessionID,
+              })
+            }
+          } catch (err) {
+            await logger.warn("🔍 FORK SESSION: idle — failed to fetch messages", {
+              sessionID: props.sessionID,
+              error: err instanceof Error ? err.message : String(err),
+            })
+          }
+        }
+
         const phase = getLargeContextPhase(props.sessionID)
         if (phase === "active") {
           await logger.info("Idle: large model finished, cleaning up phase (no compact triggered)", {
