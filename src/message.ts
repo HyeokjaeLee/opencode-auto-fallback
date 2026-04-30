@@ -26,12 +26,13 @@ export function convertToPromptPart(part: MessagePart): PromptPart | null {
 
 export function extractUserParts(
   messages: MessageWithParts[],
+  options?: { allowSynthetic?: boolean },
 ): { info: MessageInfo; parts: PromptPart[] } | null {
   const lastUserMessage = [...messages].reverse().find(m => m.info.role === "user")
   if (!lastUserMessage) return null
 
   const parts = lastUserMessage.parts
-    .filter(p => !isSyntheticPart(p))
+    .filter(p => options?.allowSynthetic || !isSyntheticPart(p))
     .map(p => convertToPromptPart(p))
     .filter((p): p is PromptPart => p !== null)
 

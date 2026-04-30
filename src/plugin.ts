@@ -51,13 +51,17 @@ interface ChatMessageInput {
   }
 }
 
-async function fetchSessionData(sessionID: string, context: PluginInput, hookInput?: ChatMessageInput) {
+async function fetchSessionData(sessionID: string, context: PluginInput, logger: ReturnType<typeof createLogger>, hookInput?: ChatMessageInput) {
   const messagesResponse = await context.client.session.messages({ path: { id: sessionID } })
   const messages = (messagesResponse.data ?? []) as {
     info: { id: string; role: string; sessionID: string; agent?: string; model?: { providerID: string; modelID: string } }
     parts: any[]
   }[]
-  const extracted = extractUserParts(messages as any)
+  let extracted = extractUserParts(messages as any)
+  if (!extracted) {
+    await logger.info("No user parts found (non-synthetic), retrying with synthetic allowed", { sessionID })
+    extracted = extractUserParts(messages as any, { allowSynthetic: true })
+  }
   const lastAssistant = [...messages].reverse().find(m => m.info.role === "assistant")
   const currentModel = lastAssistant?.info.model ?? hookInput?.model
   return { messages, extracted, currentModel }
@@ -143,7 +147,7 @@ async function handleRetry(
   hookInput?: ChatMessageInput,
 ) {
   const backoffLevel = incrementBackoff(sessionID)
-  const { extracted, currentModel } = await fetchSessionData(sessionID, context, hookInput)
+  const { extracted, currentModel } = await fetchSessionData(sessionID, context, logger, hookInput)
   if (!extracted || !currentModel) {
     await logger.error("Cannot retry: missing message or model", { sessionID, hasExtracted: !!extracted, hasCurrentModel: !!currentModel })
     return
@@ -187,7 +191,7 @@ async function handleImmediate(
   hookInput?: ChatMessageInput,
 ) {
   activateCooldown(sessionID, config.cooldownMs)
-  const { extracted, currentModel } = await fetchSessionData(sessionID, context, hookInput)
+  const { extracted, currentModel } = await fetchSessionData(sessionID, context, logger, hookInput)
 
   if (currentModel) {
     markModelCooldown(currentModel.providerID, currentModel.modelID, config.cooldownMs)
@@ -351,7 +355,7 @@ export async function createPlugin(context: PluginInput): Promise<Hooks> {
         return
       }
 
-      const { extracted, currentModel, messages } = await fetchSessionData(input.sessionID, context)
+      const { extracted, currentModel, messages } = await fetchSessionData(input.sessionID, context, logger)
       if (!extracted) {
         await logger.info("Compacting: no extracted user message", { sessionID: input.sessionID })
         return
@@ -422,7 +426,7 @@ export async function createPlugin(context: PluginInput): Promise<Hooks> {
           return
         }
 
-        const { extracted } = await fetchSessionData(props.sessionID, context)
+        const { extracted } = await fetchSessionData(props.sessionID, context, logger)
         if (!extracted) {
           await logger.info("Compacted: no extracted user message", { sessionID: props.sessionID })
           return
