@@ -94,10 +94,12 @@ async function hasActiveChildren(sessionID: string, context: PluginInput): Promi
     // Check child session status individually via the session.status API
     const statusResp = await context.client.session.status()
     const allStatuses = (statusResp?.data ?? {}) as Record<string, { type: string }>
-    return children.some(c => {
+    // Only consider children that are explicitly busy or retry (not idle and not missing)
+    for (const c of children) {
       const s = allStatuses[c.id]
-      return !s || s.type === "busy" || s.type === "retry"
-    })
+      if (s?.type === "busy" || s?.type === "retry") return true
+    }
+    return false
   } catch {
     // Fail-closed
     return true
