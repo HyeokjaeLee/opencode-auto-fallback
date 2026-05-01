@@ -425,6 +425,11 @@ export async function createPlugin(context: PluginInput): Promise<PluginHooks> {
       })
     },
     "chat.params": async (input, output) => {
+      // Track the agent for this session (needed by threshold-based large context switch
+      // since compacting hook never fires with auto:false)
+      if (input.agent) {
+        setSessionOriginalAgent(input.sessionID, input.agent)
+      }
       if (input.model) {
         const { changed, previous: prev } = hasModelChanged(
           input.sessionID, input.model.providerID, input.model.id,
@@ -884,6 +889,7 @@ export async function createPlugin(context: PluginInput): Promise<PluginHooks> {
         // ---- Threshold-based context switch (before large model phase) ----
         const sessionPhase = getLargeContextPhase(props.sessionID)
         const lcf = config.largeContextFallback
+        await logger.info("Idle: checking context", { sessionID: props.sessionID, phase: sessionPhase, hasLcf: !!lcf })
         if (lcf && sessionPhase !== "active" && sessionPhase !== "summarizing") {
           try {
             const msgResp = await context.client.session.messages({ path: { id: props.sessionID } })
@@ -891,14 +897,28 @@ export async function createPlugin(context: PluginInput): Promise<PluginHooks> {
             const lastAsst = [...raw].reverse().find(m => m.info.role === "assistant")
             if (lastAsst?.info?.tokens?.input) {
               const curModel = getCurrentModel(props.sessionID)
+              const agent = getSessionOriginalAgent(props.sessionID)
+              await logger.info("Idle: context details", {
+                sessionID: props.sessionID,
+                tokensInput: lastAsst.info.tokens.input,
+                model: curModel ? `${curModel.providerID}/${curModel.modelID}` : "none",
+                agent,
+                lcfAgents: lcf?.agents,
+              })
               if (curModel) {
                 const modelKey = `${curModel.providerID}/${curModel.modelID}`
                 const limit = getModelContextLimit(modelKey)
                 if (limit) {
                   const usage = lastAsst.info.tokens.input
                   const ratio = usage / limit
+                  await logger.info("Idle: context ratio", {
+                    sessionID: props.sessionID,
+                    usage,
+                    limit,
+                    ratio: `${(ratio * 100).toFixed(1)}%`,
+                    exceed: ratio >= 0.90,
+                  })
                   if (ratio >= 0.90) {
-                    const agent = getSessionOriginalAgent(props.sessionID)
                     if (agent && isLargeContextAgent(agent, lcf.agents)) {
                       await logger.info("Context threshold exceeded, switching to large model", {
                         sessionID: props.sessionID,
@@ -911,12 +931,27 @@ export async function createPlugin(context: PluginInput): Promise<PluginHooks> {
                       )
                       return
                     }
+                    await logger.info("Idle: threshold exceeded but agent not in largeContextFallback.agents", {
+                      sessionID: props.sessionID, agent,
+                    })
                   }
+                } else {
+                  await logger.info("Idle: no context limit found for model", {
+                    sessionID: props.sessionID, modelKey,
+                  })
                 }
               }
+            } else {
+              await logger.info("Idle: no tokens.input in last assistant", {
+                sessionID: props.sessionID,
+                hasTokens: !!lastAsst?.info?.tokens,
+              })
             }
-          } catch {
-            // Non-critical — suppress fetch errors
+          } catch (err) {
+            await logger.info("Idle: fetch/parse error in threshold check", {
+              sessionID: props.sessionID,
+              error: err instanceof Error ? err.message : String(err),
+            })
           }
         }
 

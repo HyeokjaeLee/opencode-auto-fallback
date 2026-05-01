@@ -1,4 +1,4 @@
-# OpenCode Auto-Fallback 플러그인: 완벽한 아키텍처 분석 최종 보고서
+# OpenCode Auto-Fallback 플러그인: 상세 아키텍처 분석 보고서
 
 ## 📋 작업 완료 요약
 
@@ -28,7 +28,7 @@
 opencode-auto-fallback/
 ├── index.ts                      # 공개 API 진입점 (17 lines)
 ├── src/
-│   ├── plugin.ts                 # 핵심 오케스트레이션 (1,016 lines)
+│   ├── plugin.ts                 # 핵심 오케스트레이션 (1,021 lines)
 │   ├── types.ts                  # 모든 타입 정의 (115 lines)
 │   ├── config.ts                 # 설정 로딩 및 체인 해석 (213 lines)
 │   ├── decision.ts               # 오류 분류 로직 (43 lines)
@@ -233,11 +233,12 @@ Forked Session Lane:
 7. forked session 종료
 
 Main Session Lane (계속):
-8. injectForkResult() 후 자동 계속 처리
+8. injectForkResult()가 main session에 session.prompt() 호출로 결과 주입
 ```
 
-#### B. **In-place Switch 경로** (session.error 시)
+#### B. **In-place Switch 경로** (session.error 또는 session.idle 시)
 ```
+session.error 경로:
 handleLargeContextSwitch():
 1. 컨텍스트 오버플로우 감지
 2. 현재 모덄에서 대형 모덄로 즉시 전환
@@ -248,6 +249,12 @@ handleLargeContextSwitch():
 7. 작업 완료 → session.idle → handleLargeContextCompletion()
 8. session.summarize() 호출
 9. session.compacted(summarizing) → 원래 모덄로 복귀
+
+session.idle 경로 (토큰 사용률 기반):
+1. 토큰 사용률 90% 이상 감지
+2. handleLargeContextSwitch() 호출 (동일한 흐름)
+3. 대형 모덄로 전환 및 작업 수행
+4. 원래 모덄로 복귀
 ```
 
 ### 5. 운영상 중요한 아키텍처 요소 (Oracle 추가 요구사항)
@@ -301,7 +308,7 @@ type PluginInput = {
 #### C. SDK 오류 처리 패턴
 - **오류 타입 계층**: `ApiError`, `ProviderAuthError`, `MessageAbortedError`, `ContextOverflowError`
 - **`isRetryable` 플래그**: 제공자 SDK의 재시도 권장
-- **상태 코드 휴리스틱**: 5xx 오류는 항상 재시도
+- **상태 코드 휴리스틱**: `isRetryable`이 없을 때 제한된 상태 코드 휴리스틱으로 일부 5xx/429/529를 재시도
 - **`session.error` vs `session.status`**: 구조화된 데이터 vs 텍스트 패턴
 
 ### 7. 통합 격차 및 개선 권장사항 (Oracle 구체화)
@@ -378,12 +385,12 @@ type PluginInput = {
 ## 🎯 최종 평가
 
 ### 아키텍처 강점 (Oracle 검토 완료)
-1. **대체로 완벽한 오류 분류 시스템**: 6단계 우선순위와 다중 소스 오류 감지
+1. **강력한 오류 분류 시스템**: 6단계 우선순위와 다중 소스 오류 감지
 2. **효과적인 폴백 오케스트레이션**: 백오프 재시도 → 폴백 체인 → 대형 컨텍스트 폴백
 3. **분산 상태 관리**: 여러 모듈 Map을 통한 명확한 책임 분할
-4. **엄격한 TypeScript 통제**: 어댑터 레이어를 통한 최소화된 `as any` 사용
+4. **엄격한 TypeScript 통제**: 어댑터 레이어를 통한 타입 안전성 유지 (일부 `as any` 사용 존재)
 5. **모듈러 설계**: 관심사 완전 분리와 확장 가능한 구조
-6. **OpenCode SDK 대체로 완벽한 통합**: 정확한 훅 사용, 이벤트 처리, 모덄 메타데이터 활용
+6. **OpenCode SDK 통합**: 정확한 훅 사용, 이벤트 처리, 모덄 메타데이터 활용 (일부 통합 격차 존재)
 
 ### 개선 영역 (Oracle 검토 완료)
 1. **타입 시스템**: SDK v1/v2 간 타입 불일치 및 experimental hook 시그니처 정리
@@ -391,7 +398,7 @@ type PluginInput = {
 3. **개발 경험**: 설정 검증 강화 및 CI 품질 게이트 추가
 
 ### 전체 평가
-OpenCode Auto-Fallback 플러그인은 **생산 수준의 설계**를 가진 구조화되고 신뢰성 있는 폌백 시스템입니다. 실제 사용 사례에서 잘 작동하며, Oracle 검토를 통해 확인된 통합 개선과 타입 정리를 통해 더욱 강력한 시스템으로 발전할 수 있습니다.
+OpenCode Auto-Fallback 플러그인은 **구조화되고 신뢰성 있는 폌백 시스템**입니다. 실제 사용 사례에서 잘 작동하며, Oracle 검토를 통해 확인된 통합 개선과 타입 정리를 통해 더욱 강력한 시스템으로 발전할 수 있습니다.
 
 특히 이벤트 흐름 다이어그램, 상태 관리 구조, 대형 컨텍스트 폴백 경로 구분, 운영상 중요한 아키텍처 요소 등이 추가로 검증되어 분석의 완전성과 정확성이 개선되었습니다. 다만 SDK 통합에는 일부 격차가 존재합니다.
 
