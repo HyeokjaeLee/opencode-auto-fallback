@@ -110,10 +110,28 @@ async function checkContextThreshold(
   try {
     const msgResp = await context.client.session.messages({ path: { id: sessionID } })
     const raw = (msgResp.data ?? []) as Array<{ info: { role: string; tokens?: { input: number; output?: number } } }>
-    const lastAsst = [...raw].reverse().find(m => m.info.role === "assistant")
-    const tokensInput = lastAsst?.info?.tokens?.input
-    const tokensOutput = lastAsst?.info?.tokens?.output
-    if (tokensInput === undefined || tokensInput === null) return { atThreshold: false, usage: 0, limit: 0 }
+
+    // OpenCode reports per-message tokens; sum across all assistant messages for cumulative context
+    let cumulativeInput = 0
+    let cumulativeOutput = 0
+    let lastAsstInput = 0
+    let lastAsstOutput = 0
+    let asstCount = 0
+
+    for (const m of raw) {
+      if (m.info.role === "assistant" && m.info.tokens?.input != null) {
+        cumulativeInput += m.info.tokens.input
+        cumulativeOutput += m.info.tokens.output ?? 0
+        lastAsstInput = m.info.tokens.input
+        lastAsstOutput = m.info.tokens.output ?? 0
+        asstCount++
+      }
+    }
+
+    if (asstCount === 0 || cumulativeInput === 0) {
+      await logger.info("Idle: no assistant messages with token data", { sessionID })
+      return { atThreshold: false, usage: 0, limit: 0 }
+    }
 
     const curModel = getCurrentModel(sessionID)
     if (!curModel) return { atThreshold: false, usage: 0, limit: 0 }
@@ -121,20 +139,20 @@ async function checkContextThreshold(
     const limit = getModelContextLimit(modelKey)
     if (!limit) return { atThreshold: false, usage: 0, limit: 0 }
 
-    const usage = tokensInput + (tokensOutput ?? 0)
+    const usage = cumulativeInput + cumulativeOutput
     const reserved = getCompactionReserved()
 
     let atThreshold: boolean
     if (reserved !== undefined) {
-      // Use compaction.reserved semantics: at threshold when usage >= limit - reserved
       atThreshold = usage >= limit - reserved
     } else {
-      // Fallback to 80% ratio if reserved is not available
       atThreshold = usage / limit >= 0.80
     }
 
     await logger.info("Idle: context check", {
-      sessionID, tokensInput, tokensOutput, usage, limit,
+      sessionID, asstCount,
+      cumulativeInput, cumulativeOutput, usage, limit,
+      lastAsstInput, lastAsstOutput,
       reserved: reserved ?? "unset (using 80% ratio)",
       threshold: reserved ? `limit - reserved = ${limit - reserved}` : `${(0.80 * 100).toFixed(0)}%`,
       atThreshold,
