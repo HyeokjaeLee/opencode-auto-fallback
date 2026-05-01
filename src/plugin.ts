@@ -707,13 +707,15 @@ export async function createPlugin(context: PluginInput): Promise<PluginHooks> {
             sessionID: input.sessionID,
           })
         } else {
-          // Manual /compact during active phase — the prompt tells the compactor to produce
-          // a compact summary sized for the original model. After compaction completes,
-          // session.idle checks return condition (no children, no pending tools → returns).
-          // handleLargeContextReturn then calls summarize() again with the original model,
-          // enforcing the default model's context limit.
-          output.prompt = "Summarize preserving: what the user requested, key files changed, decisions made, and current task status. Format for the original (smaller context) model to continue seamlessly."
-          await logger.info("Compacting: /compact during active phase, default model prompt set", {
+          // Manual /compact during active phase:
+          // 1. Set prompt for original model size (large model compacts, but prompt is aggressive)
+          // 2. Immediately transition to "summarizing" phase so the next idle triggers
+          //    handleLargeContextCompletion (switch-back) WITHOUT a second compaction step.
+          //    Reason: the large model's compacted output may exceed original model's context limit,
+          //    making a second compaction by original model impossible.
+          output.prompt = "Produce an extremely concise summary preserving only: the user's original request, key files changed, critical decisions, and current status. The summary MUST fit within 50K tokens. Discard all verbatim conversation — this is for a smaller context model."
+          setLargeContextPhase(input.sessionID, "summarizing")
+          await logger.info("Compacting: /compact during active, switching to summarizing phase", {
             sessionID: input.sessionID,
           })
         }
