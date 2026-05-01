@@ -111,24 +111,38 @@ async function checkContextThreshold(
     const msgResp = await context.client.session.messages({ path: { id: sessionID } })
     const raw = (msgResp.data ?? []) as Array<{ info: { role: string; tokens?: { input: number; output?: number } } }>
 
-    // OpenCode reports per-message tokens; sum across all assistant messages for cumulative context
+    // Find the last assistant message that has non-zero token data.
+    // info.tokens.input is the cumulative prompt tokens for that generation,
+    // matching the context usage shown in the OpenCode TUI.
+    // The very last message may have input=0 if the SDK hasn't populated it yet,
+    // so we scan backwards for the most recent message with real data.
+    let asstCount = 0
+    let lastInput = 0
+    let lastOutput = 0
     let cumulativeInput = 0
     let cumulativeOutput = 0
-    let lastAsstInput = 0
-    let lastAsstOutput = 0
-    let asstCount = 0
+    let maxInput = 0
 
     for (const m of raw) {
       if (m.info.role === "assistant" && m.info.tokens?.input != null) {
-        cumulativeInput += m.info.tokens.input
-        cumulativeOutput += m.info.tokens.output ?? 0
-        lastAsstInput = m.info.tokens.input
-        lastAsstOutput = m.info.tokens.output ?? 0
+        const inVal = m.info.tokens.input
+        const outVal = m.info.tokens.output ?? 0
         asstCount++
+        cumulativeInput += inVal
+        cumulativeOutput += outVal
+        if (inVal > maxInput) maxInput = inVal
+        if (inVal > 0) {
+          lastInput = inVal
+          lastOutput = outVal
+        }
       }
     }
 
-    if (asstCount === 0 || cumulativeInput === 0) {
+    // Use the last non-zero assistant message's input as the cumulative context
+    const tokensInput = lastInput
+    const tokensOutput = lastOutput
+
+    if (asstCount === 0 || tokensInput === 0) {
       await logger.info("Idle: no assistant messages with token data", { sessionID })
       return { atThreshold: false, usage: 0, limit: 0 }
     }
@@ -139,7 +153,17 @@ async function checkContextThreshold(
     const limit = getModelContextLimit(modelKey)
     if (!limit) return { atThreshold: false, usage: 0, limit: 0 }
 
-    const usage = cumulativeInput + cumulativeOutput
+    const usage = tokensInput + tokensOutput
+
+    // Diagnostic: compare with sum approach and maxInput for verification
+    const diagnostic = {
+      sumInput: cumulativeInput,
+      sumOutput: cumulativeOutput,
+      maxInput,
+      lastNonZeroInput: tokensInput,
+      lastNonZeroOutput: tokensOutput,
+    }
+
     const reserved = getCompactionReserved()
 
     let atThreshold: boolean
@@ -151,8 +175,8 @@ async function checkContextThreshold(
 
     await logger.info("Idle: context check", {
       sessionID, asstCount,
-      cumulativeInput, cumulativeOutput, usage, limit,
-      lastAsstInput, lastAsstOutput,
+      tokensInput, tokensOutput, usage, limit,
+      diagnostic,
       reserved: reserved ?? "unset (using 80% ratio)",
       threshold: reserved ? `limit - reserved = ${limit - reserved}` : `${(0.80 * 100).toFixed(0)}%`,
       atThreshold,
