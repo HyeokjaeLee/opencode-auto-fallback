@@ -1,4 +1,4 @@
-import type { FallbackModel, ForkTrackingEntry, ForkStatus } from "../types"
+import type { FallbackModel, ForkTrackingEntry, ForkStatus, ResolvedModel } from "../types"
 
 type LargeContextPhase = "active" | "summarizing"
 
@@ -10,6 +10,7 @@ const largeContextPhase = new Map<string, LargeContextPhase>()
 const modelContextLimits = new Map<string, number>()
 const sessionOriginalAgent = new Map<string, string>()
 const forkTracking = new Map<string, ForkTrackingEntry>()
+const sessionRestoreModel = new Map<string, ResolvedModel>()
 
 export function setActiveFallbackParams(sessionID: string, model: FallbackModel): void {
   activeFallbackParams.set(sessionID, model)
@@ -129,6 +130,18 @@ export function hasActiveFork(mainSessionID: string): boolean {
   return false
 }
 
+export function setRestoreModel(sessionID: string, providerID: string, modelID: string): void {
+  sessionRestoreModel.set(sessionID, { providerID, modelID })
+}
+
+export function getRestoreModel(sessionID: string): ResolvedModel | undefined {
+  return sessionRestoreModel.get(sessionID)
+}
+
+export function deleteRestoreModel(sessionID: string): void {
+  sessionRestoreModel.delete(sessionID)
+}
+
 export function cleanupSession(sessionID: string): void {
   largeContextSessions.delete(sessionID)
   currentModelSessions.delete(sessionID)
@@ -136,6 +149,7 @@ export function cleanupSession(sessionID: string): void {
   largeContextPhase.delete(sessionID)
   activeFallbackParams.delete(sessionID)
   sessionOriginalAgent.delete(sessionID)
+  sessionRestoreModel.delete(sessionID)
   // Clean up fork tracking: remove entries keyed by forked session ID,
   // or remove all fork entries whose main session matches
   forkTracking.delete(sessionID)

@@ -55,6 +55,8 @@ import {
   getSessionOriginalAgent,
   hasActiveFork,
   getForkTracking,
+  setRestoreModel,
+  getRestoreModel,
 } from "./state/context-state"
 
 import { injectForkResult } from "./session-fork"
@@ -311,6 +313,12 @@ async function handleLargeContextSwitch(
     error: errorMessage,
   })
 
+  // Capture the current model to restore later (not getOriginalModel which is first-ever)
+  const currentModel = getCurrentModel(sessionID)
+  if (currentModel) {
+    setRestoreModel(sessionID, currentModel.providerID, currentModel.modelID)
+  }
+
   await abortSession(sessionID, context)
 
   setLargeContextPhase(sessionID, "active")
@@ -345,7 +353,7 @@ async function handleLargeContextCompletion(
   context: PluginInput,
   logger: ReturnType<typeof createLogger>,
 ): Promise<void> {
-  const original = getOriginalModel(sessionID)
+  const original = getRestoreModel(sessionID) ?? getOriginalModel(sessionID)
   if (!original) return
 
   await logger.info("Large context work done, compacting for switch-back", {
@@ -793,9 +801,10 @@ export async function createPlugin(context: PluginInput): Promise<PluginHooks> {
           return
         }
 
-        const original = getOriginalModel(props.sessionID)
+        // Use restore model (captured at switch time) if available, fall back to first-ever model
+        const original = getRestoreModel(props.sessionID) ?? getOriginalModel(props.sessionID)
         if (!original) {
-          await logger.info("Compacted: no original model tracked for session", { sessionID: props.sessionID })
+          await logger.info("Compacted: no model to restore for session", { sessionID: props.sessionID })
           return
         }
 
@@ -822,13 +831,17 @@ export async function createPlugin(context: PluginInput): Promise<PluginHooks> {
           return
         }
 
-        // "active" without "summarizing" means the large model's session got compacted
-        // (e.g., user manually ran /compact). Don't switch back — just clean up.
+        // "active" without "summarizing" means compaction fired after our switch.
+        // Trigger the completion (summarize + switch-back) instead of just cleaning up.
         if (phase === "active") {
-          deleteLargeContextPhase(props.sessionID)
-          await logger.info("Compacted: large model session compacted (likely manual), phase cleaned", {
+          await logger.info("Compacted: triggering switch-back after compaction", {
             sessionID: props.sessionID,
           })
+          if (lcf) {
+            await handleLargeContextCompletion(props.sessionID, lcf, context, logger)
+          } else {
+            deleteLargeContextPhase(props.sessionID)
+          }
           return
         }
 
@@ -872,7 +885,7 @@ export async function createPlugin(context: PluginInput): Promise<PluginHooks> {
         // ---- Threshold-based context switch (before large model phase) ----
         const sessionPhase = getLargeContextPhase(props.sessionID)
         const lcf = config.largeContextFallback
-        if (lcf && sessionPhase !== "active" && sessionPhase !== "summarizing") {
+        if (lcf && sessionPhase !== "active" && sessionPhase !== "summarizing" && !hasActiveFork(props.sessionID)) {
           try {
             const msgResp = await context.client.session.messages({ path: { id: props.sessionID } })
             const raw = (msgResp.data ?? []) as Array<{ info: { role: string; tokens?: { input: number; output?: number } } }>
