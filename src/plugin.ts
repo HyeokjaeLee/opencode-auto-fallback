@@ -656,27 +656,10 @@ export async function createPlugin(context: PluginInput): Promise<PluginHooks> {
         return
       }
 
-      await logger.info("Compacting: switching to large context model in-place", {
+      // Large context switch is now handled proactively by session.idle threshold
+      // (80% context usage). Let auto-compaction proceed normally as fallback.
+      await logger.info("Compacting: large context agent, letting auto-compaction proceed", {
         sessionID: input.sessionID, agent, largeModel: lcf.model,
-        fromModel: currentModel ? `${currentModel.providerID}/${currentModel.modelID}` : "unknown",
-      })
-      setSessionOriginalAgent(input.sessionID, agent)
-
-      const switched = await handleLargeContextSwitch(
-        input.sessionID, lcf, context, logger,
-        `Compaction triggered at context limit`,
-      )
-
-      if (switched) {
-        // Safety net: if OpenCode still compacts after our switch,
-        // minimize disruption with a simple continuation prompt.
-        output.prompt = "Continue the current work. A large context model is now handling the session."
-        return
-      }
-
-      // Switch failed — let normal compaction proceed as fallback.
-      await logger.warn("Compacting: switch failed, falling back to default compaction", {
-        sessionID: input.sessionID,
       })
     },
     "experimental.compaction.autocontinue": async (
@@ -840,17 +823,13 @@ export async function createPlugin(context: PluginInput): Promise<PluginHooks> {
           return
         }
 
-        // "active" without "summarizing" means compaction fired after our switch.
-        // Trigger the completion (summarize + switch-back) instead of just cleaning up.
+        // "active" without "summarizing" means compaction fired while large model is busy.
+        // Don't trigger switch-back yet — wait for session.idle (large model completion).
+        // Just clean up the compaction but keep the phase so switch-back happens on idle.
         if (phase === "active") {
-          await logger.info("Compacted: triggering switch-back after compaction", {
+          await logger.info("Compacted: auto-compacted during large model work, waiting for idle", {
             sessionID: props.sessionID,
           })
-          if (lcf) {
-            await handleLargeContextCompletion(props.sessionID, lcf, context, logger)
-          } else {
-            deleteLargeContextPhase(props.sessionID)
-          }
           return
         }
 
