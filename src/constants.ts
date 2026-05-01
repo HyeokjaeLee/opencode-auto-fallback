@@ -61,7 +61,7 @@ export const FORK_TIMEOUT_MS = 300_000
 export const FORK_INJECT_DELAY_MS = 500
 
 /** Text sent to large model after seamless switch to continue the conversation */
-export const LARGE_CONTEXT_CONTINUATION = "Continue from where you left off. A larger context model is now handling the session — you have more room to work."
+export const LARGE_CONTEXT_CONTINUATION = "Continue from where you left off."
 
 /** Text sent to original model after switch-back from large context model */
-export const RETURN_CONTINUATION = "A larger context model handled part of this conversation. The context has been compacted to fit the original model's limits. Continue from where you left off."
+export const RETURN_CONTINUATION = "Continue from where you left off."
