@@ -49,6 +49,9 @@ import {
   deleteLargeContextPhase,
   setModelContextLimit,
   getModelContextLimit,
+  setModelLimit,
+  getModelInputLimit,
+  getModelOutputLimit,
   setSessionCooldownModel,
   getSessionCooldownModel,
   deleteSessionCooldownModel,
@@ -68,8 +71,6 @@ import {
   setCompactionTarget,
   getAndClearCompactionTarget,
   clearCompactionTarget,
-  setSessionLatestTokens,
-  getSessionLatestTokens,
 } from "./state/context-state"
 
 import { injectForkResult } from "./session-fork"
@@ -110,68 +111,99 @@ async function checkContextThreshold(
   logger: ReturnType<typeof createLogger>,
 ): Promise<{ atThreshold: boolean; usage: number; limit: number }> {
   try {
-    // Priority 1: Use token counts tracked from EventMessageUpdated (most accurate)
-    const tracked = getSessionLatestTokens(sessionID)
-    let tokensInput: number
-    let tokensOutput: number
-    let source: string
-
-    if (tracked && tracked.input > 0) {
-      tokensInput = tracked.input
-      tokensOutput = tracked.output
-      source = "event"
-    } else {
-      // Priority 2: Fall back to summing all messages' info.tokens.input from messages() API
-      const msgResp = await context.client.session.messages({ path: { id: sessionID } })
-      const raw = (msgResp.data ?? []) as Array<{ info: { role: string; tokens?: { input: number; output?: number } } }>
-
-      let cumulativeInput = 0
-      let cumulativeOutput = 0
-      let asstCount = 0
-
-      for (const m of raw) {
-        if (m.info.role === "assistant" && m.info.tokens?.input != null) {
-          cumulativeInput += m.info.tokens.input
-          cumulativeOutput += m.info.tokens.output ?? 0
-          asstCount++
+    const msgResp = await context.client.session.messages({ path: { id: sessionID } })
+    const raw = (msgResp.data ?? []) as Array<{
+      info: {
+        role: string
+        tokens?: {
+          input: number
+          output?: number
+          reasoning?: number
+          cache?: { read?: number; write?: number }
         }
       }
+    }>
 
-      if (asstCount === 0 || cumulativeInput === 0) {
-        await logger.info("Idle: no assistant messages with token data", { sessionID })
-        return { atThreshold: false, usage: 0, limit: 0 }
+    // Scan from the end to find the last assistant message with non-zero total tokens.
+    // This matches the TUI's approach exactly (session-context-metrics.ts).
+    // Total tokens = input + output + reasoning + cache.read + cache.write
+    // where `tokens.input` is adjustedInputTokens (inputTokens - cacheRead - cacheWrite)
+    // and the TUI adds cache back, giving real cumulative context.
+    let totalTokens = 0
+    let lastInput = 0
+    let lastOutput = 0
+    let lastReasoning = 0
+    let lastCacheRead = 0
+    let lastCacheWrite = 0
+    let asstCount = 0
+
+    for (const m of raw) {
+      if (m.info.role === "assistant" && m.info.tokens) {
+        asstCount++
+        const t = m.info.tokens
+        const tokenSum = t.input + (t.output ?? 0) + (t.reasoning ?? 0)
+          + (t.cache?.read ?? 0) + (t.cache?.write ?? 0)
+        // Only update last* when this message has real token data
+        if (tokenSum > 0) {
+          lastInput = t.input
+          lastOutput = t.output ?? 0
+          lastReasoning = t.reasoning ?? 0
+          lastCacheRead = t.cache?.read ?? 0
+          lastCacheWrite = t.cache?.write ?? 0
+          totalTokens = tokenSum
+        }
       }
+    }
 
-      tokensInput = cumulativeInput
-      tokensOutput = cumulativeOutput
-      source = "sum"
+    if (asstCount === 0 || totalTokens === 0) {
+      await logger.info("Idle: no assistant messages with token data", { sessionID })
+      return { atThreshold: false, usage: 0, limit: 0 }
     }
 
     const curModel = getCurrentModel(sessionID)
     if (!curModel) return { atThreshold: false, usage: 0, limit: 0 }
     const modelKey = `${curModel.providerID}/${curModel.modelID}`
-    const limit = getModelContextLimit(modelKey)
-    if (!limit) return { atThreshold: false, usage: 0, limit: 0 }
 
-    const usage = tokensInput + tokensOutput
-    const reserved = getCompactionReserved()
+    // Match OpenCode's isOverflow() logic exactly (overflow.ts):
+    //   count = tokens.total || (input + output + cache.read + cache.write)
+    //   usable = model.limit.input - reserved (if input limit exists)
+    //          = model.limit.context - maxOutput (fallback)
+    //   reserved = config.compaction.reserved ?? min(20000, model.limit.output)
+    // Triggers when: count >= usable
+    const ctxLimit = getModelContextLimit(modelKey)
+    if (!ctxLimit || ctxLimit === 0) return { atThreshold: false, usage: 0, limit: 0 }
 
-    let atThreshold: boolean
-    if (reserved !== undefined) {
-      atThreshold = usage >= limit - reserved
-    } else {
-      atThreshold = usage / limit >= 0.80
-    }
+    const inputLimit = getModelInputLimit(modelKey)
+    const outputLimit = getModelOutputLimit(modelKey)
+
+    // count excludes reasoning (matching OpenCode's isOverflow fallback)
+    const count = lastInput + lastOutput + lastCacheRead + lastCacheWrite
+
+    // Max output tokens (OpenCode: min(model.limit.output, 32000) || 32000)
+    const maxOutput = Math.min(outputLimit ?? 32_000, 32_000)
+
+    // Reserved: config value or min(20000, outputLimit) or min(20000, maxOutput)
+    const configReserved = getCompactionReserved()
+    const reserved = configReserved ?? Math.min(20_000, outputLimit ?? maxOutput)
+
+    // Usable: inputLimit - reserved (if inputLimit exists) or ctxLimit - maxOutput
+    const usable = inputLimit
+      ? Math.max(0, inputLimit - reserved)
+      : Math.max(0, ctxLimit - maxOutput)
+
+    const atThreshold = count >= usable
+    const usage = count
 
     await logger.info("Idle: context check", {
-      sessionID,
-      tokensInput, tokensOutput, usage, limit,
-      source,
-      reserved: reserved ?? "unset (using 80% ratio)",
-      threshold: reserved ? `limit - reserved = ${limit - reserved}` : `${(0.80 * 100).toFixed(0)}%`,
+      sessionID, asstCount,
+      count, usable, usage: count, limit: ctxLimit,
+      inputLimit, outputLimit,
+      reserved, maxOutput,
+      lastInput, lastOutput, lastReasoning,
+      lastCacheRead, lastCacheWrite,
       atThreshold,
     })
-    return { atThreshold, usage, limit }
+    return { atThreshold, usage, limit: ctxLimit }
   } catch (err) {
     await logger.info("Idle: threshold check error", {
       sessionID, error: err instanceof Error ? err.message : String(err),
@@ -657,6 +689,10 @@ export async function createPlugin(context: PluginInput): Promise<PluginHooks> {
         if (ctxLimit !== undefined) {
           const modelKey = `${input.model.providerID}/${input.model.id}`
           setModelContextLimit(modelKey, ctxLimit)
+          // Also store input/output limits for matching OpenCode's usable() calculation
+          const rawLimit = input.model.limit as { context: number; input?: number; output: number }
+          if (rawLimit.input !== undefined) setModelLimit(modelKey, "input", rawLimit.input)
+          setModelLimit(modelKey, "output", rawLimit.output)
           if (changed) {
             await logger.info("Detected model context limit", {
               sessionID: input.sessionID,
@@ -1261,20 +1297,6 @@ export async function createPlugin(context: PluginInput): Promise<PluginHooks> {
         if (props.status.type === "idle" && resetIfExpired(props.sessionID)) {
           const removed = cleanupExpired()
           await logger.info("Cooldown expired, state reset", { sessionID: props.sessionID, expiredCooldowns: removed })
-        }
-      }
-      if (event.type === "message.updated") {
-        const props = event.properties as {
-          info: {
-            id: string
-            sessionID: string
-            role: string
-            tokens?: { input: number; output?: number }
-          }
-        }
-        const { info } = props
-        if (info.role === "assistant" && info.tokens?.input) {
-          setSessionLatestTokens(info.sessionID, info.tokens.input, info.tokens.output ?? 0)
         }
       }
       if (event.type === "session.deleted") {

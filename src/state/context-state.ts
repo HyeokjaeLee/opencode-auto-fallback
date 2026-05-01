@@ -75,6 +75,22 @@ export function getModelContextLimit(modelKey: string): number | undefined {
   return modelContextLimits.get(modelKey)
 }
 
+const modelInputLimits = new Map<string, number>()
+const modelOutputLimits = new Map<string, number>()
+
+export function setModelLimit(modelKey: string, type: "input" | "output", limit: number): void {
+  if (type === "input") modelInputLimits.set(modelKey, limit)
+  else modelOutputLimits.set(modelKey, limit)
+}
+
+export function getModelInputLimit(modelKey: string): number | undefined {
+  return modelInputLimits.get(modelKey)
+}
+
+export function getModelOutputLimit(modelKey: string): number | undefined {
+  return modelOutputLimits.get(modelKey)
+}
+
 export function setSessionCooldownModel(sessionID: string, providerID: string, modelID: string): void {
   sessionCooldownModel.set(sessionID, { providerID, modelID })
 }
@@ -152,7 +168,6 @@ export function cleanupSession(sessionID: string): void {
   sessionRestoreModel.delete(sessionID)
   largeModelIdleCount.delete(sessionID)
   compactionTarget.delete(sessionID)
-  clearSessionLatestTokens(sessionID)
   // Clean up fork tracking: remove entries keyed by forked session ID,
   // or remove all fork entries whose main session matches
   forkTracking.delete(sessionID)
@@ -221,24 +236,6 @@ export function clearLargeModelIdle(sessionID: string): void {
 
 export function getLargeModelIdleCount(sessionID: string): number {
   return largeModelIdleCount.get(sessionID) ?? 0
-}
-
-// Track latest token counts from EventMessageUpdated for accurate context usage
-const sessionLatestTokens = new Map<string, { input: number; output: number }>()
-
-export function setSessionLatestTokens(sessionID: string, input: number, output: number): void {
-  const current = sessionLatestTokens.get(sessionID)
-  if (!current || input >= current.input) {
-    sessionLatestTokens.set(sessionID, { input, output })
-  }
-}
-
-export function getSessionLatestTokens(sessionID: string): { input: number; output: number } | undefined {
-  return sessionLatestTokens.get(sessionID)
-}
-
-export function clearSessionLatestTokens(sessionID: string): void {
-  sessionLatestTokens.delete(sessionID)
 }
 
 
