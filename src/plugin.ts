@@ -691,8 +691,16 @@ export async function createPlugin(context: PluginInput): Promise<PluginHooks> {
       input: { sessionID: string; agent: string },
       output: { enabled: boolean },
     ) => {
-      // Suppress auto-continue for both the main session (waiting for fork)
-      // and the fork session itself (prevent re-entering loops like ralph-loop).
+      const phase = getLargeContextPhase(input.sessionID)
+      // Suppress auto-continue during large model switch phases
+      if (phase === "active" || phase === "summarizing") {
+        output.enabled = false
+        await logger.info("Autocontinue: suppressed (large context phase)", {
+          sessionID: input.sessionID, phase,
+        })
+        return
+      }
+      // Suppress auto-continue for fork sessions
       if (hasActiveFork(input.sessionID) || getForkTracking(input.sessionID)) {
         output.enabled = false
         await logger.info("Autocontinue: suppressed (active fork in progress)", {
