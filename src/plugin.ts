@@ -68,6 +68,8 @@ import {
   setCompactionTarget,
   getAndClearCompactionTarget,
   clearCompactionTarget,
+  setSessionLatestTokens,
+  getSessionLatestTokens,
 } from "./state/context-state"
 
 import { injectForkResult } from "./session-fork"
@@ -108,39 +110,41 @@ async function checkContextThreshold(
   logger: ReturnType<typeof createLogger>,
 ): Promise<{ atThreshold: boolean; usage: number; limit: number }> {
   try {
-    const msgResp = await context.client.session.messages({ path: { id: sessionID } })
-    const raw = (msgResp.data ?? []) as Array<{ info: { role: string; tokens?: { input: number; output?: number } } }>
+    // Priority 1: Use token counts tracked from EventMessageUpdated (most accurate)
+    const tracked = getSessionLatestTokens(sessionID)
+    let tokensInput: number
+    let tokensOutput: number
+    let source: string
 
-    // Find the last assistant message that has non-zero token data.
-    // info.tokens.input is the cumulative prompt tokens for that generation,
-    // matching the context usage shown in the OpenCode TUI.
-    // The very last message may have input=0 if the SDK hasn't populated it yet,
-    // so we scan backwards for the most recent message with real data.
-    let asstCount = 0
-    let cumulativeInput = 0
-    let cumulativeOutput = 0
-    let maxInput = 0
+    if (tracked && tracked.input > 0) {
+      tokensInput = tracked.input
+      tokensOutput = tracked.output
+      source = "event"
+    } else {
+      // Priority 2: Fall back to summing all messages' info.tokens.input from messages() API
+      const msgResp = await context.client.session.messages({ path: { id: sessionID } })
+      const raw = (msgResp.data ?? []) as Array<{ info: { role: string; tokens?: { input: number; output?: number } } }>
 
-    for (const m of raw) {
-      if (m.info.role === "assistant" && m.info.tokens?.input != null) {
-        const inVal = m.info.tokens.input
-        const outVal = m.info.tokens.output ?? 0
-        asstCount++
-        cumulativeInput += inVal
-        cumulativeOutput += outVal
-        if (inVal > maxInput) maxInput = inVal
+      let cumulativeInput = 0
+      let cumulativeOutput = 0
+      let asstCount = 0
+
+      for (const m of raw) {
+        if (m.info.role === "assistant" && m.info.tokens?.input != null) {
+          cumulativeInput += m.info.tokens.input
+          cumulativeOutput += m.info.tokens.output ?? 0
+          asstCount++
+        }
       }
-    }
 
-    // Use cumulative sum of all assistant message tokens as a RELATIVE measure.
-    // This may differ from the TUI's absolute value (TUI includes system prompt,
-    // tool definitions, etc.) but grows proportionally with real context usage.
-    const tokensInput = cumulativeInput
-    const tokensOutput = cumulativeOutput
+      if (asstCount === 0 || cumulativeInput === 0) {
+        await logger.info("Idle: no assistant messages with token data", { sessionID })
+        return { atThreshold: false, usage: 0, limit: 0 }
+      }
 
-    if (asstCount === 0 || tokensInput === 0) {
-      await logger.info("Idle: no assistant messages with token data", { sessionID })
-      return { atThreshold: false, usage: 0, limit: 0 }
+      tokensInput = cumulativeInput
+      tokensOutput = cumulativeOutput
+      source = "sum"
     }
 
     const curModel = getCurrentModel(sessionID)
@@ -150,14 +154,6 @@ async function checkContextThreshold(
     if (!limit) return { atThreshold: false, usage: 0, limit: 0 }
 
     const usage = tokensInput + tokensOutput
-
-    // Diagnostic: individual message tokens for verification
-    const diagnostic = {
-      sumInput: cumulativeInput,
-      sumOutput: cumulativeOutput,
-      maxInput,
-    }
-
     const reserved = getCompactionReserved()
 
     let atThreshold: boolean
@@ -168,9 +164,9 @@ async function checkContextThreshold(
     }
 
     await logger.info("Idle: context check", {
-      sessionID, asstCount,
+      sessionID,
       tokensInput, tokensOutput, usage, limit,
-      diagnostic,
+      source,
       reserved: reserved ?? "unset (using 80% ratio)",
       threshold: reserved ? `limit - reserved = ${limit - reserved}` : `${(0.80 * 100).toFixed(0)}%`,
       atThreshold,
@@ -1265,6 +1261,20 @@ export async function createPlugin(context: PluginInput): Promise<PluginHooks> {
         if (props.status.type === "idle" && resetIfExpired(props.sessionID)) {
           const removed = cleanupExpired()
           await logger.info("Cooldown expired, state reset", { sessionID: props.sessionID, expiredCooldowns: removed })
+        }
+      }
+      if (event.type === "message.updated") {
+        const props = event.properties as {
+          info: {
+            id: string
+            sessionID: string
+            role: string
+            tokens?: { input: number; output?: number }
+          }
+        }
+        const { info } = props
+        if (info.role === "assistant" && info.tokens?.input) {
+          setSessionLatestTokens(info.sessionID, info.tokens.input, info.tokens.output ?? 0)
         }
       }
       if (event.type === "session.deleted") {

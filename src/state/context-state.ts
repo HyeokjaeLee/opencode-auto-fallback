@@ -152,6 +152,7 @@ export function cleanupSession(sessionID: string): void {
   sessionRestoreModel.delete(sessionID)
   largeModelIdleCount.delete(sessionID)
   compactionTarget.delete(sessionID)
+  clearSessionLatestTokens(sessionID)
   // Clean up fork tracking: remove entries keyed by forked session ID,
   // or remove all fork entries whose main session matches
   forkTracking.delete(sessionID)
@@ -220,6 +221,24 @@ export function clearLargeModelIdle(sessionID: string): void {
 
 export function getLargeModelIdleCount(sessionID: string): number {
   return largeModelIdleCount.get(sessionID) ?? 0
+}
+
+// Track latest token counts from EventMessageUpdated for accurate context usage
+const sessionLatestTokens = new Map<string, { input: number; output: number }>()
+
+export function setSessionLatestTokens(sessionID: string, input: number, output: number): void {
+  const current = sessionLatestTokens.get(sessionID)
+  if (!current || input >= current.input) {
+    sessionLatestTokens.set(sessionID, { input, output })
+  }
+}
+
+export function getSessionLatestTokens(sessionID: string): { input: number; output: number } | undefined {
+  return sessionLatestTokens.get(sessionID)
+}
+
+export function clearSessionLatestTokens(sessionID: string): void {
+  sessionLatestTokens.delete(sessionID)
 }
 
 
