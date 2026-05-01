@@ -686,12 +686,16 @@ export async function createPlugin(context: PluginInput): Promise<PluginHooks> {
       // Pre-generation context threshold check
       // session.idle doesn't fire during auto-continue chains, so threshold would never
       // be checked without this proactive check before every generation.
+      // Only abort here — do not call handleLargeContextSwitch because the session is
+      // mid-generation-preparation; abort + prompt creates a race condition where
+      // the abort error is ignored while the switch's prompt fails on the aborted session.
+      // The session.idle handler performs the actual switch after the session settles.
       if (!getLargeContextPhase(input.sessionID)) {
         const lcf = config.largeContextFallback
         if (lcf && input.agent && isRegisteredAgent(input.agent)) {
           const threshold = await checkContextThreshold(input.sessionID, context, logger)
           if (threshold.atThreshold) {
-            await logger.info("Pre-generation threshold exceeded, abort+switch", {
+            await logger.info("Pre-generation threshold exceeded, aborting", {
               sessionID: input.sessionID,
               usage: threshold.usage,
               limit: threshold.limit,
@@ -700,11 +704,7 @@ export async function createPlugin(context: PluginInput): Promise<PluginHooks> {
               await context.client.session.abort({ path: { id: input.sessionID } })
               await new Promise(resolve => setTimeout(resolve, ABORT_DELAY_MS))
             } catch { /* session may already be idle */ }
-            try {
-              const switched = await handleLargeContextSwitch(input.sessionID, lcf, context, logger,
-                `Context at ${((threshold.usage / threshold.limit) * 100).toFixed(1)}%`)
-              if (switched) return
-            } catch { /* switch failed, original generation proceeds */ }
+            return
           }
         }
       }
@@ -1003,16 +1003,26 @@ export async function createPlugin(context: PluginInput): Promise<PluginHooks> {
         const lcf = config.largeContextFallback
         let agent = getSessionOriginalAgent(props.sessionID)
 
-        // If tracking state was lost (e.g. plugin restart), recover agent from session messages
-        if (!agent && lcf) {
+        // Recover agent if missing (plugin restart) or not registered (e.g. overwritten by "title")
+        if (lcf && (!agent || (agent && !isRegisteredAgent(agent)))) {
+          const previousAgent = agent
           try {
-            const { extracted } = await fetchSessionData(props.sessionID, context, logger)
-            if (extracted?.info?.agent) {
-              agent = extracted.info.agent
-              // Re-register for this session
-              setSessionOriginalAgent(props.sessionID, agent)
-              await logger.info("Idle: recovered agent from messages", {
-                sessionID: props.sessionID, agent,
+            const { extracted, messages } = await fetchSessionData(props.sessionID, context, logger)
+            let recovered: string | undefined
+            // Prefer extractUserParts result if it returns a registered agent
+            if (extracted?.info?.agent && isRegisteredAgent(extracted.info.agent)) {
+              recovered = extracted.info.agent
+            } else {
+              // Fallback: scan all user messages for a registered agent
+              const found = [...messages].reverse()
+                .find(m => m.info.role === "user" && m.info.agent && isRegisteredAgent(m.info.agent))
+              recovered = found?.info?.agent
+            }
+            if (recovered) {
+              agent = recovered
+              setSessionOriginalAgent(props.sessionID, recovered)
+              await logger.info("Idle: recovered agent", {
+                sessionID: props.sessionID, agent: recovered, previousAgent,
               })
             }
           } catch {
