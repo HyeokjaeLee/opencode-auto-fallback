@@ -467,7 +467,7 @@ export async function createPlugin(context: PluginInput): Promise<PluginHooks> {
         if (lcf) {
           const lcfParsed = parseModel(lcf.model)
           const lcfKey = `${lcfParsed.providerID}/${lcfParsed.modelID}`
-          if (!getModelContextLimit(lcfKey) && lcfParsed.providerID === input.model.providerID) {
+          if (!getModelContextLimit(lcfKey) && lcfParsed.providerID === input.model.providerID && input.provider.info?.models) {
             const largeModel = input.provider.info.models[lcfParsed.modelID]
             if (largeModel?.limit?.context) {
               setModelContextLimit(lcfKey, largeModel.limit.context)
@@ -895,12 +895,13 @@ export async function createPlugin(context: PluginInput): Promise<PluginHooks> {
             const msgResp = await context.client.session.messages({ path: { id: props.sessionID } })
             const raw = (msgResp.data ?? []) as Array<{ info: { role: string; tokens?: { input: number } } }>
             const lastAsst = [...raw].reverse().find(m => m.info.role === "assistant")
-            if (lastAsst?.info?.tokens?.input) {
+            const tokensInput = lastAsst?.info?.tokens?.input
+            if (tokensInput !== undefined && tokensInput !== null) {
               const curModel = getCurrentModel(props.sessionID)
               const agent = getSessionOriginalAgent(props.sessionID)
               await logger.info("Idle: context details", {
                 sessionID: props.sessionID,
-                tokensInput: lastAsst.info.tokens.input,
+                tokensInput,
                 model: curModel ? `${curModel.providerID}/${curModel.modelID}` : "none",
                 agent,
                 lcfAgents: lcf?.agents,
@@ -909,7 +910,7 @@ export async function createPlugin(context: PluginInput): Promise<PluginHooks> {
                 const modelKey = `${curModel.providerID}/${curModel.modelID}`
                 const limit = getModelContextLimit(modelKey)
                 if (limit) {
-                  const usage = lastAsst.info.tokens.input
+                  const usage = tokensInput
                   const ratio = usage / limit
                   await logger.info("Idle: context ratio", {
                     sessionID: props.sessionID,
