@@ -11,6 +11,7 @@ const modelContextLimits = new Map<string, number>()
 const sessionOriginalAgent = new Map<string, string>()
 const forkTracking = new Map<string, ForkTrackingEntry>()
 const sessionRestoreModel = new Map<string, ResolvedModel>()
+const switchBackGuard = new Map<string, number>()
 
 export function setActiveFallbackParams(sessionID: string, model: FallbackModel): void {
   activeFallbackParams.set(sessionID, model)
@@ -142,6 +143,28 @@ export function deleteRestoreModel(sessionID: string): void {
   sessionRestoreModel.delete(sessionID)
 }
 
+/** Set guard to skip 2 idles after switch-back (inject response + 1 margin) */
+export function setSwitchBackGuard(sessionID: string): void {
+  switchBackGuard.set(sessionID, 2)
+}
+
+export function hasSwitchBackGuard(sessionID: string): boolean {
+  const count = switchBackGuard.get(sessionID)
+  return count !== undefined && count > 0
+}
+
+/** Decrement guard counter, clear when 0 */
+export function consumeSwitchBackGuard(sessionID: string): void {
+  const count = switchBackGuard.get(sessionID)
+  if (count === undefined) return
+  if (count <= 1) switchBackGuard.delete(sessionID)
+  else switchBackGuard.set(sessionID, count - 1)
+}
+
+export function clearSwitchBackGuard(sessionID: string): void {
+  switchBackGuard.delete(sessionID)
+}
+
 export function cleanupSession(sessionID: string): void {
   largeContextSessions.delete(sessionID)
   currentModelSessions.delete(sessionID)
@@ -150,6 +173,7 @@ export function cleanupSession(sessionID: string): void {
   activeFallbackParams.delete(sessionID)
   sessionOriginalAgent.delete(sessionID)
   sessionRestoreModel.delete(sessionID)
+  switchBackGuard.delete(sessionID)
   // Clean up fork tracking: remove entries keyed by forked session ID,
   // or remove all fork entries whose main session matches
   forkTracking.delete(sessionID)

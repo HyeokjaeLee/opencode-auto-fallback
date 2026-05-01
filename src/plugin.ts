@@ -57,6 +57,9 @@ import {
   getForkTracking,
   setRestoreModel,
   getRestoreModel,
+  setSwitchBackGuard,
+  hasSwitchBackGuard,
+  consumeSwitchBackGuard,
 } from "./state/context-state"
 
 import { injectForkResult } from "./session-fork"
@@ -391,6 +394,8 @@ async function handleLargeContextCompletion(
       ? `The large context model processed the request. Result:\n"""\n${assistantText}\n"""\n\nContinue with the result above.`
       : "The large context model completed processing. Continue the work."
 
+    // Set guard BEFORE prompt to prevent re-switch on inject's session.idle
+    setSwitchBackGuard(sessionID)
     setActiveFallbackParams(sessionID, { providerID: original.providerID, modelID: original.modelID })
     await context.client.session.prompt({
       path: { id: sessionID },
@@ -850,10 +855,13 @@ export async function createPlugin(context: PluginInput): Promise<PluginHooks> {
       if (event.type === "session.idle") {
         const props = event.properties as { sessionID: string }
 
+        // Consume switch-back guard counter (clear after 2 idles)
+        consumeSwitchBackGuard(props.sessionID)
+
         // ---- Threshold-based context switch (before large model phase) ----
         const sessionPhase = getLargeContextPhase(props.sessionID)
         const lcf = config.largeContextFallback
-        if (lcf && sessionPhase !== "active" && sessionPhase !== "summarizing" && !hasActiveFork(props.sessionID)) {
+        if (lcf && sessionPhase !== "active" && sessionPhase !== "summarizing" && !hasActiveFork(props.sessionID) && !hasSwitchBackGuard(props.sessionID)) {
           try {
             const msgResp = await context.client.session.messages({ path: { id: props.sessionID } })
             const raw = (msgResp.data ?? []) as Array<{ info: { role: string; tokens?: { input: number; output?: number } } }>
