@@ -691,10 +691,22 @@ export async function createPlugin(context: PluginInput): Promise<PluginHooks> {
         return
       }
 
-      // Large context switch is now handled proactively by session.idle threshold
-      // (80% context usage). Let auto-compaction proceed normally as fallback.
-      await logger.info("Compacting: large context agent, letting auto-compaction proceed", {
-        sessionID: input.sessionID, agent, largeModel: lcf.model,
+      // Reactive switch: compaction triggered before session.idle threshold caught up
+      // (e.g., context jumped from <80% to >95% in one turn). Switch to large model
+      // to prevent losing context. session.compacted with phase=active will wait for idle.
+      const switched = await handleLargeContextSwitch(
+        input.sessionID, lcf, context, logger,
+        `Compaction triggered while context at limit`,
+      )
+      if (switched) {
+        output.prompt = "Continue the current work. A large context model is now handling the session."
+        await logger.info("Compacting: switched to large model (reactive path)", {
+          sessionID: input.sessionID, largeModel: lcf.model,
+        })
+        return
+      }
+      await logger.warn("Compacting: reactive switch failed, auto-compaction proceeds", {
+        sessionID: input.sessionID,
       })
     },
     "experimental.compaction.autocontinue": async (
