@@ -955,7 +955,24 @@ export async function createPlugin(context: PluginInput): Promise<PluginHooks> {
         const props = event.properties as { sessionID: string }
         const phase = getLargeContextPhase(props.sessionID)
         const lcf = config.largeContextFallback
-        const agent = getSessionOriginalAgent(props.sessionID)
+        let agent = getSessionOriginalAgent(props.sessionID)
+
+        // If tracking state was lost (e.g. plugin restart), recover agent from session messages
+        if (!agent && lcf) {
+          try {
+            const { extracted } = await fetchSessionData(props.sessionID, context, logger)
+            if (extracted?.info?.agent) {
+              agent = extracted.info.agent
+              // Re-register for this session
+              setSessionOriginalAgent(props.sessionID, agent)
+              await logger.info("Idle: recovered agent from messages", {
+                sessionID: props.sessionID, agent,
+              })
+            }
+          } catch {
+            await logger.info("Idle: failed to recover agent", { sessionID: props.sessionID })
+          }
+        }
 
         // Phase: Normal / No phase — threshold check for model switch or manual compaction
         if (!phase) {
