@@ -349,42 +349,72 @@ async function handleLargeContextSwitch(
   return ok
 }
 
-const SUMMARIZE_TIMEOUT_MS = 60_000
-
 async function handleLargeContextCompletion(
   sessionID: string,
-  _lcf: NonNullable<FallbackConfig["largeContextFallback"]>,
+  lcf: NonNullable<FallbackConfig["largeContextFallback"]>,
   context: PluginInput,
   logger: ReturnType<typeof createLogger>,
 ): Promise<void> {
   const original = getRestoreModel(sessionID) ?? getOriginalModel(sessionID)
   if (!original) return
 
-  await logger.info("Large context work done, compacting for switch-back", {
+  await logger.info("Large context work done, injecting result and switching back", {
     sessionID, originalModel: `${original.providerID}/${original.modelID}`,
   })
 
-  setLargeContextPhase(sessionID, "summarizing")
   try {
-    await context.client.session.summarize({
+    // 1. Get the large model's last response before reverting
+    const msgResp = await context.client.session.messages({ path: { id: sessionID } })
+    const raw = (msgResp.data ?? []) as Array<{ info: { role: string; id: string }; parts: Array<{ type: string; text?: string }> }>
+    const lastAssistant = [...raw].reverse().find(m => m.info.role === "assistant")
+    const assistantText = lastAssistant
+      ? lastAssistant.parts.filter(p => p.type === "text").map(p => p.text).filter(Boolean).join("\n")
+      : ""
+
+    // 2. Find the user message that was being processed (before the switch)
+    const lastUser = [...raw].reverse().find(m => m.info.role === "user")
+    if (!lastUser) {
+      await logger.error("Switch-back: no user message found", { sessionID })
+      deleteLargeContextPhase(sessionID)
+      return
+    }
+
+    // 3. Get the agent for the inject prompt
+    const agent = getSessionOriginalAgent(sessionID) ?? lcf.agents[0]
+
+    // 4. Revert to the last user message (removes large model's response)
+    await context.client.session.revert({ path: { id: sessionID }, body: { messageID: lastUser.info.id } })
+    await new Promise(resolve => setTimeout(resolve, REVERT_DELAY_MS))
+
+    // 5. Inject the large model's result with the ORIGINAL model
+    const injectText = assistantText
+      ? `The large context model processed the request. Result:\n"""\n${assistantText}\n"""\n\nContinue with the result above.`
+      : "The large context model completed processing. Continue the work."
+
+    setActiveFallbackParams(sessionID, { providerID: original.providerID, modelID: original.modelID })
+    await context.client.session.prompt({
       path: { id: sessionID },
-      body: { providerID: original.providerID, modelID: original.modelID },
+      body: {
+        model: { providerID: original.providerID, modelID: original.modelID },
+        agent,
+        parts: [{ type: "text", text: injectText }],
+      },
     })
+
+    deleteLargeContextPhase(sessionID)
+    await showToastSafely(context, {
+      title: "Original Model Restored",
+      message: `Switched back to ${original.providerID}/${original.modelID}`,
+      variant: "info",
+      duration: TOAST_DURATION_MS,
+    }, logger)
+    await logger.info("Switch-back complete", { sessionID, originalModel: `${original.providerID}/${original.modelID}` })
   } catch (err) {
-    await logger.error("Summarize failed during switch-back", {
+    await logger.error("Switch-back failed", {
       sessionID, error: err instanceof Error ? err.message : String(err),
     })
     deleteLargeContextPhase(sessionID)
   }
-
-  // If session.compacted doesn't fire within the timeout, clean up
-  setTimeout(() => {
-    const phase = getLargeContextPhase(sessionID)
-    if (phase === "summarizing") {
-      deleteLargeContextPhase(sessionID)
-      logger.warn("Summarize timeout: phase cleaned up", { sessionID })
-    }
-  }, SUMMARIZE_TIMEOUT_MS)
 }
 
 export async function createPlugin(context: PluginInput): Promise<PluginHooks> {
@@ -793,16 +823,7 @@ export async function createPlugin(context: PluginInput): Promise<PluginHooks> {
           return
         }
 
-        // Use restore model (captured at switch time) if available, fall back to first-ever model
-        const original = getRestoreModel(props.sessionID) ?? getOriginalModel(props.sessionID)
-        if (!original) {
-          await logger.info("Compacted: no model to restore for session", { sessionID: props.sessionID })
-          return
-        }
-
         // If there's an active fork, inject a waiting notification and skip
-        // model switching. This check comes before the phase check because
-        // session.idle may have already cleared the phase.
         const activeFork = hasActiveFork(props.sessionID)
         if (activeFork) {
           await logger.info("Compacted: active fork in progress, main session waits for fork result", {
@@ -817,55 +838,14 @@ export async function createPlugin(context: PluginInput): Promise<PluginHooks> {
           return
         }
 
+        // If compacted during large model work, wait for idle to switch back
         const phase = getLargeContextPhase(props.sessionID)
-        if (phase !== "active" && phase !== "summarizing") {
-          await logger.info("Compacted: not in large context phase, skipping", { sessionID: props.sessionID, phase: phase ?? "none" })
-          return
-        }
-
-        // "active" without "summarizing" means compaction fired while large model is busy.
-        // Don't trigger switch-back yet — wait for session.idle (large model completion).
-        // Just clean up the compaction but keep the phase so switch-back happens on idle.
         if (phase === "active") {
           await logger.info("Compacted: auto-compacted during large model work, waiting for idle", {
             sessionID: props.sessionID,
           })
           return
         }
-
-        deleteLargeContextPhase(props.sessionID)
-
-        const { extracted } = await fetchSessionData(props.sessionID, context, logger)
-        if (!extracted) {
-          await logger.info("Compacted: no extracted user message", { sessionID: props.sessionID })
-          return
-        }
-
-        // Use the originally tracked agent name, not extracted.info.agent
-        // (which may point to a synthetic "Continue" message with a wrong agent)
-        const agent = getSessionOriginalAgent(props.sessionID) ?? extracted.info.agent
-        if (!isLargeContextAgent(agent, lcf.agents)) {
-          await logger.info("Compacted: agent not in largeContextFallback.agents", { sessionID: props.sessionID, agent, agents: lcf.agents })
-          return
-        }
-
-        await logger.info("Compacted: switching back to original model after large context", {
-          sessionID: props.sessionID, original,
-        })
-        const ok = await revertAndPrompt(
-          props.sessionID, agent, extracted.parts, extracted.info.id,
-          original, logger, context,
-        )
-        if (!ok) {
-          await logger.error("Compacted: failed to switch back to original model", { sessionID: props.sessionID, original })
-          return
-        }
-        await showToastSafely(context, {
-          title: "Original Model Restored",
-          message: `Switched back to ${original.providerID}/${original.modelID}`,
-          variant: "info",
-          duration: TOAST_DURATION_MS,
-        }, logger)
       }
       if (event.type === "session.idle") {
         const props = event.properties as { sessionID: string }
