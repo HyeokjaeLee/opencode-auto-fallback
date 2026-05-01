@@ -688,12 +688,20 @@ export async function createPlugin(context: PluginInput): Promise<PluginHooks> {
     "experimental.session.compacting": async (input, output) => {
       const phase = getLargeContextPhase(input.sessionID)
 
-      // Path 1: Summarizing for switch-back — compact to default-model size
+      // Path 1: Summarizing for switch-back — append context about original model's limit
       if (phase === "summarizing") {
-        output.prompt = "Summarize preserving: what the user requested, what the large model accomplished, key files changed, decisions made, and current task status. Format for the original model to continue seamlessly."
-        await logger.info("Compacting: summarizing phase (switch-back)", {
-          sessionID: input.sessionID,
-        })
+        const original = getRestoreModel(input.sessionID) ?? getOriginalModel(input.sessionID)
+        if (original) {
+          const originalLimit = getModelContextLimit(`${original.providerID}/${original.modelID}`)
+          output.context.push(originalLimit
+            ? `The compacted summary below must fit within ${originalLimit} tokens total because the session will resume on the original model (${original.providerID}/${original.modelID}). Keep the summary concise while preserving: what the user requested, what the large model accomplished, key files changed, decisions made, and current task status.`
+            : `The session will resume on the original model (${original.providerID}/${original.modelID}) after compaction. Preserve: user request, large model accomplishments, key files, decisions, and current status. Keep the summary concise.`)
+          await logger.info("Compacting: summarizing — appended original model context", {
+            sessionID: input.sessionID,
+            originalModel: `${original.providerID}/${original.modelID}`,
+            originalLimit,
+          })
+        }
         return
       }
 
@@ -701,28 +709,37 @@ export async function createPlugin(context: PluginInput): Promise<PluginHooks> {
       if (phase === "active") {
         const target = getAndClearCompactionTarget(input.sessionID)
         if (target === "large") {
-          // Our self-compaction call — preserve full context (large model limit)
-          output.prompt = "Preserve the full task context: current work, files involved, decisions made, next steps. Be thorough — this is the only record of prior work."
-          await logger.info("Compacting: large model self-compaction, preserving full context", {
+          // Self-compaction — append context about large model's capacity
+          const curModel = getCurrentModel(input.sessionID)
+          const largeLimit = curModel ? getModelContextLimit(`${curModel.providerID}/${curModel.modelID}`) : undefined
+          output.context.push(largeLimit
+            ? `The session is running on a large context model with ${largeLimit} token capacity. Preserve full task context: current work, files involved, decisions made, next steps. Be thorough — this summary may be the only record of prior work.`
+            : `Preserve full task context: current work, files involved, decisions made, next steps. Be thorough — this summary may be the only record of prior work.`)
+          await logger.info("Compacting: large model self-compaction — appended", {
             sessionID: input.sessionID,
+            largeLimit,
           })
         } else {
-          // Manual /compact during active phase:
-          // 1. Set prompt for original model size (large model compacts, but prompt is aggressive)
-          // 2. Immediately transition to "summarizing" phase so the next idle triggers
-          //    handleLargeContextCompletion (switch-back) WITHOUT a second compaction step.
-          //    Reason: the large model's compacted output may exceed original model's context limit,
-          //    making a second compaction by original model impossible.
-          output.prompt = "Produce an extremely concise summary preserving only: the user's original request, key files changed, critical decisions, and current status. The summary MUST fit within 50K tokens. Discard all verbatim conversation — this is for a smaller context model."
+          // Manual /compact during active phase — append context about original model limit
+          // and transition to summarizing phase so the next idle triggers switch-back.
+          const original = getRestoreModel(input.sessionID) ?? getOriginalModel(input.sessionID)
+          if (original) {
+            const originalLimit = getModelContextLimit(`${original.providerID}/${original.modelID}`)
+            output.context.push(originalLimit
+              ? `The compacted summary must fit within ${originalLimit} tokens because the session will return to the original model (${original.providerID}/${original.modelID}). Produce a concise summary preserving only: the user's original request, key files changed, critical decisions, and current status. Discard verbatim conversation.`
+              : `The session will return to the original model (${original.providerID}/${original.modelID}) after compaction. Produce a concise summary preserving: user request, key files, decisions, and status. Discard verbatim conversation.`)
+            await logger.info("Compacting: /compact — appended original model context", {
+              sessionID: input.sessionID,
+              originalModel: `${original.providerID}/${original.modelID}`,
+              originalLimit,
+            })
+          }
           setLargeContextPhase(input.sessionID, "summarizing")
-          await logger.info("Compacting: /compact during active, switching to summarizing phase", {
-            sessionID: input.sessionID,
-          })
         }
         return
       }
 
-      // Path 3: Fork session — legacy path
+      // Path 3: Fork session — legacy path (overrides prompt & context completely)
       const forkEntry = getForkTracking(input.sessionID)
       if (forkEntry) {
         output.context = []
@@ -732,7 +749,7 @@ export async function createPlugin(context: PluginInput): Promise<PluginHooks> {
         return
       }
 
-      // Path 4: Non-registered agent — use SDK default compaction
+      // Path 4: Non-registered agent — use SDK default compaction as-is
       const agent = getSessionOriginalAgent(input.sessionID)
       if (agent && !isRegisteredAgent(agent)) {
         await logger.info("Compacting: non-registered agent, using default", {
@@ -741,9 +758,8 @@ export async function createPlugin(context: PluginInput): Promise<PluginHooks> {
         return
       }
 
-      // Path 5: Fall through to default compaction.
-      // With auto=false globally, the compacting hook only fires on manual /compact or our
-      // own session.summarize() calls (handled in paths 1-2). No reactive switch needed.
+      // Path 5: Registered agent with no phase (manual /compact during normal operation)
+      // Use default compaction as-is. Our session.summarize() calls are handled in paths 1-2.
       await logger.info("Compacting: fall through to default", { sessionID: input.sessionID })
     },
     "experimental.compaction.autocontinue": async (
