@@ -615,9 +615,9 @@ export async function createPlugin(context: PluginInput): Promise<PluginHooks> {
     "chat.params": async (input, output) => {
       // Track the agent for this session (needed by threshold-based large context switch
       // since compacting hook never fires with auto:false).
-      // Only set once — subsequent generations (e.g. auto-title with agent "title")
-      // must NOT overwrite the original agent.
-      if (input.agent && !getSessionOriginalAgent(input.sessionID)) {
+      // Only save the first REGISTERED agent — system agents like "title" arrive first
+      // and must NOT overwrite, but also must NOT become the stored agent.
+      if (input.agent && isRegisteredAgent(input.agent) && !getSessionOriginalAgent(input.sessionID)) {
         setSessionOriginalAgent(input.sessionID, input.agent)
       }
       if (input.model) {
@@ -1045,19 +1045,44 @@ export async function createPlugin(context: PluginInput): Promise<PluginHooks> {
           if (!thresholdResult.atThreshold) return
 
           if (isRegisteredAgent(agent)) {
+            await logger.info("Idle: registered agent at threshold, checking guards", {
+              sessionID: props.sessionID, agent,
+              usage: thresholdResult.usage, limit: thresholdResult.limit,
+            })
             // Registered agent: switch to large context model
             const parsedModel = parseModel(lcf.model)
             const curModel = getCurrentModel(props.sessionID)
             if (curModel) {
               // Guard: already on large model
-              if (curModel.providerID === parsedModel.providerID && curModel.modelID === parsedModel.modelID) return
+              if (curModel.providerID === parsedModel.providerID && curModel.modelID === parsedModel.modelID) {
+                await logger.info("Idle: guard — already on large model", {
+                  sessionID: props.sessionID, model: `${curModel.providerID}/${curModel.modelID}`,
+                })
+                return
+              }
               // Guard: large model in cooldown
-              if (isModelInCooldown(parsedModel.providerID, parsedModel.modelID)) return
+              if (isModelInCooldown(parsedModel.providerID, parsedModel.modelID)) {
+                await logger.info("Idle: guard — large model in cooldown", {
+                  sessionID: props.sessionID, model: lcf.model,
+                })
+                return
+              }
               // Guard: context window ratio
               const largeLimit = getModelContextLimit(`${parsedModel.providerID}/${parsedModel.modelID}`)
-              if (largeLimit && shouldSkipLargeContextFallback(thresholdResult.limit, largeLimit, lcf.minContextRatio ?? 0.1)) return
+              if (largeLimit && shouldSkipLargeContextFallback(thresholdResult.limit, largeLimit, lcf.minContextRatio ?? 0.1)) {
+                await logger.info("Idle: guard — context window ratio too small", {
+                  sessionID: props.sessionID, currentLimit: thresholdResult.limit, largeLimit, minRatio: lcf.minContextRatio ?? 0.1,
+                })
+                return
+              }
             }
-            await handleLargeContextSwitch(props.sessionID, lcf, context, logger, `Context at ${((thresholdResult.usage / thresholdResult.limit) * 100).toFixed(1)}%`)
+            await logger.info("Idle: all guards passed, switching to large model", {
+              sessionID: props.sessionID, largeModel: lcf.model,
+            })
+            const switched = await handleLargeContextSwitch(props.sessionID, lcf, context, logger, `Context at ${((thresholdResult.usage / thresholdResult.limit) * 100).toFixed(1)}%`)
+            await logger.info("Idle: large context switch result", {
+              sessionID: props.sessionID, success: switched,
+            })
           } else {
             // Non-registered agent: manually compact to preserve default compaction behavior
             const curModel = getCurrentModel(props.sessionID)
@@ -1156,6 +1181,18 @@ export async function createPlugin(context: PluginInput): Promise<PluginHooks> {
             message?: string
             next?: number
           }
+        }
+
+        // Log session status transitions for auto-continue cycle tracking
+        const statusType = props.status.type
+        if (statusType === "busy" || statusType === "idle") {
+          const phase = getLargeContextPhase(props.sessionID)
+          const agent = getSessionOriginalAgent(props.sessionID)
+          await logger.info("Session status: " + statusType, {
+            sessionID: props.sessionID,
+            phase: phase ?? "none",
+            agent: agent ?? "unknown",
+          })
         }
 
         if (props.status.type === "retry" && props.status.message) {

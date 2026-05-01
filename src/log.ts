@@ -8,7 +8,7 @@ const LOG_DIR = join(
   "log"
 )
 const LOG_FILE = join(LOG_DIR, "fallback.log")
-const MAX_LINES = 500
+const MAX_LINES = 5000
 
 type Level = "INFO" | "WARN" | "ERROR"
 
