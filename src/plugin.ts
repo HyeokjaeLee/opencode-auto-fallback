@@ -57,7 +57,7 @@ import {
   getForkTracking,
 } from "./state/context-state"
 
-import { forkSessionForLargeContext, injectForkResult } from "./session-fork"
+import { injectForkResult } from "./session-fork"
 
 // tui is available at runtime but not typed in the SDK
 
@@ -426,15 +426,6 @@ export async function createPlugin(context: PluginInput): Promise<PluginHooks> {
   })
 
   return {
-    config: async (input) => {
-      const lcf = config.largeContextFallback
-      if (!lcf) return
-      ;(input as any).compaction = (input as any).compaction || {}
-      ;(input as any).compaction.auto = false
-      await logger.info("Config: disabled auto-compaction (large context fallback active)", {
-        largeModel: lcf.model,
-      })
-    },
     "chat.params": async (input, output) => {
       // Track the agent for this session (needed by threshold-based large context switch
       // since compacting hook never fires with auto:false)
@@ -653,48 +644,22 @@ export async function createPlugin(context: PluginInput): Promise<PluginHooks> {
         return
       }
 
-      await logger.info("Compacting: switching to large context model via fork", {
+      await logger.info("Compacting: switching to large context model in-place", {
         sessionID: input.sessionID, agent, largeModel: lcf.model,
         fromModel: currentModel ? `${currentModel.providerID}/${currentModel.modelID}` : "unknown",
       })
       setSessionOriginalAgent(input.sessionID, agent)
 
-      // Capture the last user request text to provide context when injecting fork result
-      const lastRequest = extracted.parts
-        .filter((p): p is PromptPart & { type: "text" } => p.type === "text")
-        .map(p => p.text)
-        .filter(Boolean)
-        .join("\n")
-        .slice(0, 2000)
-
-      const forkResult = await forkSessionForLargeContext(
-        input.sessionID,
-        agent,
-        { providerID: parsed.providerID, modelID: parsed.modelID },
-        { providerID: original.providerID, modelID: original.modelID },
-        context,
-        logger,
-        lastRequest,
+      const switched = await handleLargeContextSwitch(
+        input.sessionID, lcf, context, logger,
+        `Compaction triggered at context limit`,
       )
 
-      if (forkResult.ok) {
-        setLargeContextPhase(input.sessionID, "active")
-        await showToastSafely(context, {
-          title: "Large Context Model (forked)",
-          message: `Forked to ${lcf.model} for large context`,
-          variant: "info",
-          duration: TOAST_DURATION_MS,
-        }, logger)
-        await logger.info("Compacting: fork created successfully", {
-          sessionID: input.sessionID,
-          forkedSessionID: forkResult.forkedSessionID,
-        })
-        return
-      }
+      if (switched) return
 
-      // Fork failed — let normal compaction proceed as if nothing happened.
-      await logger.warn("Compacting: fork failed, letting normal compaction proceed", {
-        sessionID: input.sessionID, error: forkResult.error,
+      // Switch failed — let normal compaction proceed as fallback.
+      await logger.warn("Compacting: switch failed, falling back to default compaction", {
+        sessionID: input.sessionID,
       })
     },
     "experimental.compaction.autocontinue": async (
