@@ -473,6 +473,15 @@ export async function createPlugin(context: PluginInput): Promise<PluginHooks> {
   })
 
   return {
+    config: async (input) => {
+      const lcf = config.largeContextFallback
+      if (!lcf) return
+      ;(input as any).compaction = (input as any).compaction || {}
+      ;(input as any).compaction.auto = false
+      await logger.info("Config: disabled auto-compaction (large context fallback active)", {
+        largeModel: lcf.model,
+      })
+    },
     "chat.params": async (input, output) => {
       // Track the agent for this session (needed by threshold-based large context switch
       // since compacting hook never fires with auto:false)
