@@ -1,6 +1,5 @@
-import type { FallbackModel, ForkTrackingEntry, ForkStatus, ResolvedModel } from "../types"
-
-type LargeContextPhase = "active" | "summarizing"
+import type { FallbackModel, ForkTrackingEntry, ForkStatus, LargeContextPhase, ResolvedModel } from "../types"
+import { normalizeAgentName } from "../config"
 
 const activeFallbackParams = new Map<string, FallbackModel>()
 const largeContextSessions = new Map<string, { providerID: string; modelID: string }>()
@@ -11,7 +10,7 @@ const modelContextLimits = new Map<string, number>()
 const sessionOriginalAgent = new Map<string, string>()
 const forkTracking = new Map<string, ForkTrackingEntry>()
 const sessionRestoreModel = new Map<string, ResolvedModel>()
-const switchBackGuard = new Map<string, number>()
+const registeredAgentSet = new Set<string>()
 
 export function setActiveFallbackParams(sessionID: string, model: FallbackModel): void {
   activeFallbackParams.set(sessionID, model)
@@ -143,28 +142,6 @@ export function deleteRestoreModel(sessionID: string): void {
   sessionRestoreModel.delete(sessionID)
 }
 
-/** Set guard to skip 2 idles after switch-back (inject response + 1 margin) */
-export function setSwitchBackGuard(sessionID: string): void {
-  switchBackGuard.set(sessionID, 2)
-}
-
-export function hasSwitchBackGuard(sessionID: string): boolean {
-  const count = switchBackGuard.get(sessionID)
-  return count !== undefined && count > 0
-}
-
-/** Decrement guard counter, clear when 0 */
-export function consumeSwitchBackGuard(sessionID: string): void {
-  const count = switchBackGuard.get(sessionID)
-  if (count === undefined) return
-  if (count <= 1) switchBackGuard.delete(sessionID)
-  else switchBackGuard.set(sessionID, count - 1)
-}
-
-export function clearSwitchBackGuard(sessionID: string): void {
-  switchBackGuard.delete(sessionID)
-}
-
 export function cleanupSession(sessionID: string): void {
   largeContextSessions.delete(sessionID)
   currentModelSessions.delete(sessionID)
@@ -173,13 +150,76 @@ export function cleanupSession(sessionID: string): void {
   activeFallbackParams.delete(sessionID)
   sessionOriginalAgent.delete(sessionID)
   sessionRestoreModel.delete(sessionID)
-  switchBackGuard.delete(sessionID)
+  largeModelIdleCount.delete(sessionID)
+  compactionTarget.delete(sessionID)
   // Clean up fork tracking: remove entries keyed by forked session ID,
   // or remove all fork entries whose main session matches
   forkTracking.delete(sessionID)
   for (const [forkedID, entry] of forkTracking) {
     if (entry.mainSessionID === sessionID) forkTracking.delete(forkedID)
   }
+}
+
+export function setRegisteredAgents(agents: string[]): void {
+  registeredAgentSet.clear()
+  for (const agent of agents) {
+    registeredAgentSet.add(agent)
+  }
+}
+
+export function isRegisteredAgent(agent: string): boolean {
+  return registeredAgentSet.has(normalizeAgentName(agent))
+}
+
+export function clearRegisteredAgents(): void {
+  registeredAgentSet.clear()
+}
+
+let compactionReserved: number | undefined = undefined
+
+export function setCompactionReserved(v: number | undefined): void {
+  compactionReserved = v
+}
+
+export function getCompactionReserved(): number | undefined {
+  return compactionReserved
+}
+
+// Distinguishes manual /compact from our internal session.summarize() calls
+// "large" = our self-compaction call (use large context prompt)
+// "default" = user ran /compact (use default model prompt)
+const compactionTarget = new Map<string, "large" | "default">()
+
+export function setCompactionTarget(sessionID: string, target: "large" | "default"): void {
+  compactionTarget.set(sessionID, target)
+}
+
+export function getAndClearCompactionTarget(sessionID: string): "large" | "default" | undefined {
+  const t = compactionTarget.get(sessionID)
+  compactionTarget.delete(sessionID)
+  return t
+}
+
+export function clearCompactionTarget(sessionID: string): void {
+  compactionTarget.delete(sessionID)
+}
+
+// Track large model idle turns to prevent premature return
+const largeModelIdleCount = new Map<string, number>()
+
+export function incrementLargeModelIdle(sessionID: string): number {
+  const current = largeModelIdleCount.get(sessionID) ?? 0
+  const next = current + 1
+  largeModelIdleCount.set(sessionID, next)
+  return next
+}
+
+export function clearLargeModelIdle(sessionID: string): void {
+  largeModelIdleCount.delete(sessionID)
+}
+
+export function getLargeModelIdleCount(sessionID: string): number {
+  return largeModelIdleCount.get(sessionID) ?? 0
 }
 
 

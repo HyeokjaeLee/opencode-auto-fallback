@@ -5,7 +5,8 @@ import { clearAllCooldowns, isModelInCooldown } from "../provider-state"
 import { removeSession } from "../session-state"
 import { createMockContext, createMockMessages } from "./mocks"
 
-const { handleRetry, handleImmediate, tryFallbackChain, showToastSafely, revertAndPrompt, isLargeContextAgent, shouldSkipLargeContextFallback } = _forTesting
+const { handleRetry, handleImmediate, tryFallbackChain, showToastSafely, revertAndPrompt, shouldSkipLargeContextFallback } = _forTesting
+import { isRegisteredAgent, setRegisteredAgents, clearRegisteredAgents } from "../state/context-state"
 
 function makeConfig(overrides?: Partial<FallbackConfig>): FallbackConfig {
   return {
@@ -57,16 +58,31 @@ describe("showToastSafely", () => {
   })
 })
 
-describe("isLargeContextAgent", () => {
-  it("matches configured agents case-insensitively and ignores whitespace", () => {
-    expect(isLargeContextAgent("Sisyphus", ["sisyphus", "hephaestus"])).toBe(true)
-    expect(isLargeContextAgent("HEPHAESTUS", ["sisyphus", "hephaestus"])).toBe(true)
-    expect(isLargeContextAgent("​Sisyphus - Ultraworker", ["sisyphus-ultraworker"])).toBe(true)
+describe("isRegisteredAgent", () => {
+  afterEach(() => {
+    clearRegisteredAgents()
   })
 
-  it("does not match different agent names", () => {
-    expect(isLargeContextAgent("Sisyphus - Ultraworker", ["sisyphus", "hephaestus"])).toBe(false)
-    expect(isLargeContextAgent(undefined, ["sisyphus", "hephaestus"])).toBe(false)
+  it("matches agents that were registered via setRegisteredAgents", () => {
+    setRegisteredAgents(["sisyphus", "hephaestus"])
+    expect(isRegisteredAgent("sisyphus")).toBe(true)
+    expect(isRegisteredAgent("hephaestus")).toBe(true)
+  })
+
+  it("does not match unregistered agents", () => {
+    setRegisteredAgents(["sisyphus"])
+    expect(isRegisteredAgent("hephaestus")).toBe(false)
+  })
+
+  it("returns false when no agents are registered", () => {
+    expect(isRegisteredAgent("sisyphus")).toBe(false)
+  })
+
+  it("normalizes agent name at lookup time", () => {
+    setRegisteredAgents(["sisyphus-ultraworker"])
+    expect(isRegisteredAgent("Sisyphus - Ultraworker")).toBe(true)
+    expect(isRegisteredAgent("SISYPHUS-ULTRAWORKER")).toBe(true)
+    expect(isRegisteredAgent("hephaestus")).toBe(false)
   })
 })
 

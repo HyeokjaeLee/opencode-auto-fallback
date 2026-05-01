@@ -16,7 +16,8 @@ import {
   REVERT_DELAY_MS,
   TOAST_DURATION_MS,
   TOAST_DURATION_LONG_MS,
-  WAITING_TOAST_DURATION_MS,
+  LARGE_CONTEXT_CONTINUATION,
+  RETURN_CONTINUATION,
 } from "./constants"
 import { createLogger } from "./log"
 import {
@@ -36,6 +37,7 @@ import type { Message as SDKMessage, Part as SDKPart } from "@opencode-ai/sdk"
 import { adaptMessages, getModelFromMessage } from "./adapters/sdk-adapter"
 import {
   setActiveFallbackParams,
+  clearActiveFallbackParams,
   getAndClearFallbackParams,
   setCurrentModel,
   getCurrentModel,
@@ -57,9 +59,15 @@ import {
   getForkTracking,
   setRestoreModel,
   getRestoreModel,
-  setSwitchBackGuard,
-  hasSwitchBackGuard,
-  consumeSwitchBackGuard,
+  deleteRestoreModel,
+  setRegisteredAgents,
+  isRegisteredAgent,
+  setCompactionReserved,
+  getCompactionReserved,
+  clearLargeModelIdle,
+  setCompactionTarget,
+  getAndClearCompactionTarget,
+  clearCompactionTarget,
 } from "./state/context-state"
 
 import { injectForkResult } from "./session-fork"
@@ -76,10 +84,68 @@ function contextWindowFor(model: { providerID: string; modelID: string }): numbe
   return getModelContextLimit(`${model.providerID}/${model.modelID}`)
 }
 
-function isLargeContextAgent(agent: string | undefined, agents: string[]): boolean {
-  if (!agent) return false
-  const normalizedAgent = normalizeAgentName(agent)
-  return agents.some(configuredAgent => normalizeAgentName(configuredAgent) === normalizedAgent)
+async function hasActiveChildren(sessionID: string, context: PluginInput): Promise<boolean> {
+  try {
+    const resp = await context.client.session.children({ path: { id: sessionID } })
+    const children = (resp?.data ?? []) as Array<{ id: string }>
+    if (children.length === 0) return false
+    // Check child session status individually via the session.status API
+    const statusResp = await context.client.session.status()
+    const allStatuses = (statusResp?.data ?? {}) as Record<string, { type: string }>
+    return children.some(c => {
+      const s = allStatuses[c.id]
+      return !s || s.type === "busy" || s.type === "retry"
+    })
+  } catch {
+    // Fail-closed
+    return true
+  }
+}
+
+async function checkContextThreshold(
+  sessionID: string,
+  context: PluginInput,
+  logger: ReturnType<typeof createLogger>,
+): Promise<{ atThreshold: boolean; usage: number; limit: number }> {
+  try {
+    const msgResp = await context.client.session.messages({ path: { id: sessionID } })
+    const raw = (msgResp.data ?? []) as Array<{ info: { role: string; tokens?: { input: number; output?: number } } }>
+    const lastAsst = [...raw].reverse().find(m => m.info.role === "assistant")
+    const tokensInput = lastAsst?.info?.tokens?.input
+    const tokensOutput = lastAsst?.info?.tokens?.output
+    if (tokensInput === undefined || tokensInput === null) return { atThreshold: false, usage: 0, limit: 0 }
+
+    const curModel = getCurrentModel(sessionID)
+    if (!curModel) return { atThreshold: false, usage: 0, limit: 0 }
+    const modelKey = `${curModel.providerID}/${curModel.modelID}`
+    const limit = getModelContextLimit(modelKey)
+    if (!limit) return { atThreshold: false, usage: 0, limit: 0 }
+
+    const usage = tokensInput + (tokensOutput ?? 0)
+    const reserved = getCompactionReserved()
+
+    let atThreshold: boolean
+    if (reserved !== undefined) {
+      // Use compaction.reserved semantics: at threshold when usage >= limit - reserved
+      atThreshold = usage >= limit - reserved
+    } else {
+      // Fallback to 80% ratio if reserved is not available
+      atThreshold = usage / limit >= 0.80
+    }
+
+    await logger.info("Idle: context check", {
+      sessionID, tokensInput, tokensOutput, usage, limit,
+      reserved: reserved ?? "unset (using 80% ratio)",
+      threshold: reserved ? `limit - reserved = ${limit - reserved}` : `${(0.80 * 100).toFixed(0)}%`,
+      atThreshold,
+    })
+    return { atThreshold, usage, limit }
+  } catch (err) {
+    await logger.info("Idle: threshold check error", {
+      sessionID, error: err instanceof Error ? err.message : String(err),
+    })
+    return { atThreshold: false, usage: 0, limit: 0 }
+  }
 }
 
 function shouldSkipLargeContextFallback(
@@ -295,61 +361,113 @@ async function handleLargeContextSwitch(
   context: PluginInput,
   logger: ReturnType<typeof createLogger>,
   errorMessage: string,
-  skipAbort = false,
 ): Promise<boolean> {
-  const agent = getSessionOriginalAgent(sessionID)
-  if (!agent || !isLargeContextAgent(agent, lcf.agents)) return false
-
-  // Prevent infinite loop — already in large model mode
+  // Guard: already in a large context phase (synchronous check, no await before this)
   const phase = getLargeContextPhase(sessionID)
-  if (phase === "active" || phase === "summarizing") return false
+  if (phase === "pending" || phase === "active" || phase === "summarizing") return false
 
+  const agent = getSessionOriginalAgent(sessionID)
+  if (!agent || !isRegisteredAgent(agent)) return false
+
+  // Guard: large model in cooldown — skip switch if model is unreliable
   const parsed = parseModel(lcf.model)
-  const original = getOriginalModel(sessionID)
-  if (!original) return false
+  if (isModelInCooldown(parsed.providerID, parsed.modelID)) return false
 
-  const { extracted } = await fetchSessionData(sessionID, context, logger)
-  if (!extracted) return false
+  // Set pending phase ATOMICALLY before any await to prevent concurrent switches
+  setLargeContextPhase(sessionID, "pending")
 
-  await logger.info("Context overflow: switching to large model in-place", {
-    sessionID, agent, largeModel: lcf.model,
-    fromModel: `${original.providerID}/${original.modelID}`,
-    error: errorMessage,
-  })
+  try {
+    const original = getOriginalModel(sessionID)
+    if (!original) {
+      deleteLargeContextPhase(sessionID)
+      return false
+    }
 
-  // Capture the current model to restore later (not getOriginalModel which is first-ever)
-  const currentModel = getCurrentModel(sessionID)
-  if (currentModel) {
-    setRestoreModel(sessionID, currentModel.providerID, currentModel.modelID)
-  }
+    const { extracted } = await fetchSessionData(sessionID, context, logger)
+    if (!extracted) {
+      deleteLargeContextPhase(sessionID)
+      return false
+    }
 
-  // Skip abort when called from session.idle (session already idle — abort would fail)
-  if (!skipAbort) {
-    await abortSession(sessionID, context)
-  }
+    await logger.info("Switching to large context model", {
+      sessionID, agent, largeModel: lcf.model,
+      fromModel: `${original.providerID}/${original.modelID}`,
+      reason: errorMessage,
+    })
 
-  setLargeContextPhase(sessionID, "active")
-  // Apply the large model's params (temperature, etc.) via fallback params
-  setActiveFallbackParams(sessionID, { providerID: parsed.providerID, modelID: parsed.modelID })
+    // Save current model for restore later
+    const currentModel = getCurrentModel(sessionID)
+    if (currentModel) {
+      setRestoreModel(sessionID, currentModel.providerID, currentModel.modelID)
+    }
 
-  const ok = await revertAndPrompt(
-    sessionID, agent, extracted.parts, extracted.info.id,
-    { providerID: parsed.providerID, modelID: parsed.modelID },
-    logger, context,
-  )
+    // NO revert — all context is preserved. The last assistant response stays in history.
+    // Prompt with large model + continuation text to continue from where the small model left off.
+    setActiveFallbackParams(sessionID, { providerID: parsed.providerID, modelID: parsed.modelID })
+    await context.client.session.prompt({
+      path: { id: sessionID },
+      body: {
+        model: { providerID: parsed.providerID, modelID: parsed.modelID },
+        agent,
+        parts: [{ type: "text" as const, text: LARGE_CONTEXT_CONTINUATION }],
+      },
+    })
 
-  if (ok) {
+    setLargeContextPhase(sessionID, "active")
+    clearLargeModelIdle(sessionID)
     await showToastSafely(context, {
-      title: "Context Overflow",
-      message: `Switched to ${lcf.model} for extended context`,
+      title: "Extended Context",
+      message: `Switched to ${lcf.model} for expanded capacity`,
       variant: "info",
       duration: TOAST_DURATION_MS,
     }, logger)
-  } else {
+    return true
+  } catch (err) {
     deleteLargeContextPhase(sessionID)
-    await logger.error("Failed to switch to large context model", { sessionID, largeModel: lcf.model })
+    clearActiveFallbackParams(sessionID)
+    deleteRestoreModel(sessionID)
+    await logger.error("Failed to switch to large context model", {
+      sessionID, largeModel: lcf.model,
+      error: err instanceof Error ? err.message : String(err),
+    })
+    return false
   }
-  return ok
+}
+
+async function handleLargeContextReturn(
+  sessionID: string,
+  context: PluginInput,
+  logger: ReturnType<typeof createLogger>,
+): Promise<void> {
+  const original = getRestoreModel(sessionID) ?? getOriginalModel(sessionID)
+  if (!original) {
+    await logger.error("Return: no original model found, clearing phase", { sessionID })
+    deleteLargeContextPhase(sessionID)
+    clearLargeModelIdle(sessionID)
+    return
+  }
+
+  await logger.info("Return condition: switching back to original model", {
+    sessionID, originalModel: `${original.providerID}/${original.modelID}`,
+  })
+
+  setLargeContextPhase(sessionID, "summarizing")
+
+  // Trigger compaction using ORIGINAL model to enforce default model's context limit
+  try {
+    await context.client.session.summarize({
+      path: { id: sessionID },
+      body: { providerID: original.providerID, modelID: original.modelID },
+    })
+    await logger.info("Return: compaction triggered for switch-back", { sessionID, model: original })
+    // Actual switch-back happens in session.compacted → session.idle when phase=summarizing
+  } catch (err) {
+    await logger.error("Return: compaction failed", {
+      sessionID, error: err instanceof Error ? err.message : String(err),
+    })
+    deleteLargeContextPhase(sessionID)
+    clearLargeModelIdle(sessionID)
+  }
 }
 
 async function handleLargeContextCompletion(
@@ -359,54 +477,34 @@ async function handleLargeContextCompletion(
   logger: ReturnType<typeof createLogger>,
 ): Promise<void> {
   const original = getRestoreModel(sessionID) ?? getOriginalModel(sessionID)
-  if (!original) return
+  if (!original) {
+    await logger.error("Switch-back: no original model found, clearing phase", { sessionID })
+    deleteLargeContextPhase(sessionID)
+    clearLargeModelIdle(sessionID)
+    return
+  }
 
-  await logger.info("Large context work done, injecting result and switching back", {
+  await logger.info("Large context work done, switching back to original model", {
     sessionID, originalModel: `${original.providerID}/${original.modelID}`,
   })
 
   try {
-    // 1. Get the large model's last response before reverting
-    const msgResp = await context.client.session.messages({ path: { id: sessionID } })
-    const raw = (msgResp.data ?? []) as Array<{ info: { role: string; id: string }; parts: Array<{ type: string; text?: string }> }>
-    const lastAssistant = [...raw].reverse().find(m => m.info.role === "assistant")
-    const assistantText = lastAssistant
-      ? lastAssistant.parts.filter(p => p.type === "text").map(p => p.text).filter(Boolean).join("\n")
-      : ""
-
-    // 2. Find the user message that was being processed (before the switch)
-    const lastUser = [...raw].reverse().find(m => m.info.role === "user")
-    if (!lastUser) {
-      await logger.error("Switch-back: no user message found", { sessionID })
-      deleteLargeContextPhase(sessionID)
-      return
-    }
-
-    // 3. Get the agent for the inject prompt
     const agent = getSessionOriginalAgent(sessionID) ?? lcf.agents[0]
 
-    // 4. Revert to the last user message (removes large model's response)
-    await context.client.session.revert({ path: { id: sessionID }, body: { messageID: lastUser.info.id } })
-    await new Promise(resolve => setTimeout(resolve, REVERT_DELAY_MS))
-
-    // 5. Inject the large model's result with the ORIGINAL model
-    const injectText = assistantText
-      ? `The large context model processed the request. Result:\n"""\n${assistantText}\n"""\n\nContinue with the result above.`
-      : "The large context model completed processing. Continue the work."
-
-    // Set guard BEFORE prompt to prevent re-switch on inject's session.idle
-    setSwitchBackGuard(sessionID)
+    // Do NOT revert — compacted summary from the summarizing phase is preserved.
+    // Directly prompt original model with RETURN_CONTINUATION to continue from the compacted context.
     setActiveFallbackParams(sessionID, { providerID: original.providerID, modelID: original.modelID })
     await context.client.session.prompt({
       path: { id: sessionID },
       body: {
         model: { providerID: original.providerID, modelID: original.modelID },
         agent,
-        parts: [{ type: "text", text: injectText }],
+        parts: [{ type: "text" as const, text: RETURN_CONTINUATION }],
       },
     })
 
     deleteLargeContextPhase(sessionID)
+    deleteRestoreModel(sessionID)
     await showToastSafely(context, {
       title: "Original Model Restored",
       message: `Switched back to ${original.providerID}/${original.modelID}`,
@@ -419,6 +517,9 @@ async function handleLargeContextCompletion(
       sessionID, error: err instanceof Error ? err.message : String(err),
     })
     deleteLargeContextPhase(sessionID)
+    clearActiveFallbackParams(sessionID)
+    deleteRestoreModel(sessionID)
+    clearLargeModelIdle(sessionID)
   }
 }
 
@@ -476,10 +577,21 @@ export async function createPlugin(context: PluginInput): Promise<PluginHooks> {
     config: async (input) => {
       const lcf = config.largeContextFallback
       if (!lcf) return
-      ;(input as any).compaction = (input as any).compaction || {}
+      setRegisteredAgents(lcf.agents.map(a => normalizeAgentName(a)))
+      // Capture compaction.reserved before modifying (used as threshold for model switch)
+      const existingCompaction = (input as any).compaction
+      if (existingCompaction?.reserved !== undefined) {
+        setCompactionReserved(existingCompaction.reserved)
+        await logger.info("Config: captured compaction.reserved", {
+          reserved: existingCompaction.reserved,
+        })
+      }
+      ;(input as any).compaction = existingCompaction || {}
       ;(input as any).compaction.auto = false
-      await logger.info("Config: disabled auto-compaction (large context fallback active)", {
+      await logger.info("Config: auto-compaction globally disabled (SDK limitation: no per-agent setting)", {
+        agents: lcf.agents,
         largeModel: lcf.model,
+        note: "Non-registered agents use manual summarize() approximation",
       })
     },
     "chat.params": async (input, output) => {
@@ -574,170 +686,93 @@ export async function createPlugin(context: PluginInput): Promise<PluginHooks> {
       }
     },
     "experimental.session.compacting": async (input, output) => {
-      await logger.info("Compacting hook fired", { sessionID: input.sessionID })
+      const phase = getLargeContextPhase(input.sessionID)
 
-      // ---- Summarizing phase: compacting to switch back to original model ----
-      if (getLargeContextPhase(input.sessionID) === "summarizing") {
-        output.prompt = "The conversation was handed off to a large context model due to context overflow. The large model completed the work. Preserve the key results below:\n\n- What the user requested\n- What the large model accomplished\n- Key files changed or decisions made\n- Current task status\n\nFormat as a clear summary so the original model can continue seamlessly."
-        await logger.info("Compacting: custom prompt for summarizing phase (switch-back)", {
+      // Path 1: Summarizing for switch-back — compact to default-model size
+      if (phase === "summarizing") {
+        output.prompt = "Summarize preserving: what the user requested, what the large model accomplished, key files changed, decisions made, and current task status. Format for the original model to continue seamlessly."
+        await logger.info("Compacting: summarizing phase (switch-back)", {
           sessionID: input.sessionID,
         })
         return
       }
 
-      // ---- Fork session: replace compaction prompt with continuation instruction ----
+      // Path 2: Large model self-compaction or manual /compact during active phase
+      if (phase === "active") {
+        const target = getAndClearCompactionTarget(input.sessionID)
+        if (target === "large") {
+          // Our self-compaction call — preserve full context (large model limit)
+          output.prompt = "Preserve the full task context: current work, files involved, decisions made, next steps. Be thorough — this is the only record of prior work."
+          await logger.info("Compacting: large model self-compaction, preserving full context", {
+            sessionID: input.sessionID,
+          })
+        } else {
+          // Manual /compact during active phase — the prompt tells the compactor to produce
+          // a compact summary sized for the original model. After compaction completes,
+          // session.idle checks return condition (no children, no pending tools → returns).
+          // handleLargeContextReturn then calls summarize() again with the original model,
+          // enforcing the default model's context limit.
+          output.prompt = "Summarize preserving: what the user requested, key files changed, decisions made, and current task status. Format for the original (smaller context) model to continue seamlessly."
+          await logger.info("Compacting: /compact during active phase, default model prompt set", {
+            sessionID: input.sessionID,
+          })
+        }
+        return
+      }
+
+      // Path 3: Fork session — legacy path
       const forkEntry = getForkTracking(input.sessionID)
       if (forkEntry) {
-        const lastRequest = forkEntry.lastRequest
-        // Clear default context strings; our prompt is self-contained
         output.context = []
-        if (lastRequest) {
-          output.prompt = `The conversation context was compacted. The LLM must continue working on the task below.
-
-## Last User Request
-"""${lastRequest}"""
-
-## Instructions for the compaction output
-- Restate the user's request as shown above
-- List any files that were being modified or discussed
-- Note the current task status and next steps
-- Preserve all details without condensing — this will be the only record of prior work`
-        } else {
-          output.prompt = "The conversation context was compacted. Preserve the full task context including what was being worked on, what files were involved, and any decisions made. This will be the only record of prior work."
-        }
-        await logger.info("Compacting: replaced prompt for fork session", {
-          sessionID: input.sessionID,
-          promptLength: output.prompt.length,
-          hasLastRequest: !!lastRequest,
-        })
+        output.prompt = forkEntry.lastRequest
+          ? `The conversation was compacted. Continue work on: """${forkEntry.lastRequest}"""`
+          : "The conversation was compacted. Preserve full task context."
         return
       }
 
-      const lcf = config.largeContextFallback
-      if (!lcf) {
-        await logger.info("Compacting: no largeContextFallback config, skipping")
-        return
-      }
-
-      const original = getOriginalModel(input.sessionID)
-      if (!original) {
-        await logger.info("Compacting: no original model tracked for session", { sessionID: input.sessionID })
-        return
-      }
-
-      if (getLargeContextPhase(input.sessionID) === "summarizing") {
-        await logger.info("Compacting: summarizing phase, letting compaction proceed", { sessionID: input.sessionID })
-        return
-      }
-
-      // ---- Fast path: local checks before any API call ----
-
-      if (getLargeContextPhase(input.sessionID) === "active") {
-        await logger.info("Compacting: large model context full, letting compaction proceed", {
+      // Path 4: Non-registered agent — use SDK default compaction
+      const agent = getSessionOriginalAgent(input.sessionID)
+      if (agent && !isRegisteredAgent(agent)) {
+        await logger.info("Compacting: non-registered agent, using default", {
           sessionID: input.sessionID,
         })
         return
       }
 
-      const parsed = parseModel(lcf.model)
-      const currentModel = getCurrentModel(input.sessionID)
-      const isLargeModel = currentModel?.providerID === parsed.providerID && currentModel?.modelID === parsed.modelID
-
-      if (isLargeModel) {
-        await logger.info("Compacting: already using large model, skipping", {
-          sessionID: input.sessionID, largeModel: `${parsed.providerID}/${parsed.modelID}`,
-        })
-        return
-      }
-
-      if (isModelInCooldown(parsed.providerID, parsed.modelID)) {
-        await logger.info("Compacting: large context model in cooldown, falling through to default", {
-          sessionID: input.sessionID, largeModel: lcf.model,
-        })
-        return
-      }
-
-      if (hasActiveFork(input.sessionID)) {
-        await logger.info("Compacting: active fork exists, skipping", {
-          sessionID: input.sessionID,
-        })
-        return
-      }
-
-      const effectiveCurrent = currentModel ?? original
-      const currentWindow = contextWindowFor(effectiveCurrent)
-      const largeWindow = contextWindowFor(parsed)
-      if (currentWindow !== undefined && largeWindow !== undefined &&
-        shouldSkipLargeContextFallback(currentWindow, largeWindow, lcf.minContextRatio ?? 0.1)
-      ) {
-        await logger.info("Compacting: context window difference too small, skipping large context fallback", {
-          sessionID: input.sessionID,
-          currentModel: `${effectiveCurrent.providerID}/${effectiveCurrent.modelID}`,
-          largeModel: lcf.model,
-          currentWindow,
-          largeWindow,
-        })
-        return
-      }
-
-      // ---- API call — only when all fast-path checks pass ----
-
-      const { extracted } = await fetchSessionData(input.sessionID, context, logger)
-      if (!extracted) {
-        await logger.info("Compacting: no extracted user message", { sessionID: input.sessionID })
-        return
-      }
-
-      // Use the originally tracked agent if available, falling back to extracted info
-      // (extracted.info.agent may point to a synthetic "Continue" message with wrong agent)
-      const agent = getSessionOriginalAgent(input.sessionID) ?? extracted.info.agent
-      if (!agent) {
-        await logger.info("Compacting: no agent found for session", { sessionID: input.sessionID })
-        return
-      }
-      if (!isLargeContextAgent(agent, lcf.agents)) {
-        await logger.info("Compacting: agent not in largeContextFallback.agents", { sessionID: input.sessionID, agent, agents: lcf.agents })
-        return
-      }
-
-      // Reactive switch: compaction triggered before session.idle threshold caught up
-      // (e.g., context jumped from <80% to >95% in one turn). Switch to large model
-      // to prevent losing context. session.compacted with phase=active will wait for idle.
-      const switched = await handleLargeContextSwitch(
-        input.sessionID, lcf, context, logger,
-        `Compaction triggered while context at limit`,
-      )
-      if (switched) {
-        output.prompt = "Continue the current work. A large context model is now handling the session."
-        await logger.info("Compacting: switched to large model (reactive path)", {
-          sessionID: input.sessionID, largeModel: lcf.model,
-        })
-        return
-      }
-      await logger.warn("Compacting: reactive switch failed, auto-compaction proceeds", {
-        sessionID: input.sessionID,
-      })
+      // Path 5: Fall through to default compaction.
+      // With auto=false globally, the compacting hook only fires on manual /compact or our
+      // own session.summarize() calls (handled in paths 1-2). No reactive switch needed.
+      await logger.info("Compacting: fall through to default", { sessionID: input.sessionID })
     },
     "experimental.compaction.autocontinue": async (
       input: { sessionID: string; agent: string },
       output: { enabled: boolean },
     ) => {
       const phase = getLargeContextPhase(input.sessionID)
-      // Suppress auto-continue during large model switch phases
-      if (phase === "active" || phase === "summarizing") {
+      // Suppress during model switch transition
+      if (phase === "pending") {
         output.enabled = false
-        await logger.info("Autocontinue: suppressed (large context phase)", {
-          sessionID: input.sessionID, phase,
+        await logger.info("Autocontinue: suppressed (phase=pending)", {
+          sessionID: input.sessionID,
         })
         return
       }
-      // Suppress auto-continue for fork sessions
+      // Suppress for fork sessions
       if (hasActiveFork(input.sessionID) || getForkTracking(input.sessionID)) {
         output.enabled = false
-        await logger.info("Autocontinue: suppressed (active fork in progress)", {
+        await logger.info("Autocontinue: suppressed (active fork)", {
           sessionID: input.sessionID,
         })
+        return
       }
+      // Explicitly enable for large context phases (active/summarizing)
+      if (phase === "active" || phase === "summarizing") {
+        output.enabled = true
+        await logger.info("Autocontinue: enabled (large context phase)", {
+          sessionID: input.sessionID, phase,
+        })
+      }
+      // No-phase sessions: leave at SDK default (should be true)
     },
     event: async ({ event }) => {
       if (event.type === "session.error") {
@@ -773,9 +808,47 @@ export async function createPlugin(context: PluginInput): Promise<PluginHooks> {
         // Context overflow detection — switch to large model in-place
         if (err.data?.message && isContextOverflowError(err.data.message)) {
           const lcf = config.largeContextFallback
-          if (lcf) {
-            const switched = await handleLargeContextSwitch(sessionID, lcf, context, logger, err.data.message)
-            if (switched) return
+          if (!lcf) {
+            // No large context fallback configured — fall through to normal error handling
+          } else {
+            // Abort the failed session first
+            try {
+              await context.client.session.abort({ path: { id: sessionID } })
+              await new Promise(resolve => setTimeout(resolve, ABORT_DELAY_MS))
+            } catch { /* session may already be idle */ }
+
+            const phase = getLargeContextPhase(sessionID)
+            const agent = getSessionOriginalAgent(sessionID)
+
+            if (phase === "active") {
+              // Active large model overflow: self-compact with large model
+              const lcfParsed = parseModel(lcf.model)
+              setCompactionTarget(sessionID, "large")
+              try {
+                await context.client.session.summarize({
+                  path: { id: sessionID },
+                  body: { providerID: lcfParsed.providerID, modelID: lcfParsed.modelID },
+                })
+              } catch { clearCompactionTarget(sessionID) }
+              return
+            }
+
+            if (agent && isRegisteredAgent(agent)) {
+              // Registered agent overflow: try switch to large model
+              const switched = await handleLargeContextSwitch(sessionID, lcf, context, logger, err.data.message)
+              if (switched) return
+            } else {
+              // Non-registered agent overflow: manual compact as auto-compaction approximation
+              const curModel = getCurrentModel(sessionID)
+              await logger.info("Error: context overflow for non-registered agent, manual compact", { sessionID })
+              try {
+                await context.client.session.summarize({
+                  path: { id: sessionID },
+                  ...(curModel ? { body: { providerID: curModel.providerID, modelID: curModel.modelID } } : {}),
+                })
+              } catch { /* fall through to normal error handling */ }
+              return
+            }
             // Switch failed — fall through to normal error handling
           }
         }
@@ -837,37 +910,24 @@ export async function createPlugin(context: PluginInput): Promise<PluginHooks> {
       }
       if (event.type === "session.compacted") {
         const props = event.properties as { sessionID: string }
-        await logger.info("Compacted event received", { sessionID: props.sessionID })
-        if (getForkTracking(props.sessionID)) {
-          await logger.info("🔍 FORK SESSION: was compacted", {
-            sessionID: props.sessionID,
-          })
-        }
-        const lcf = config.largeContextFallback
-        if (!lcf) {
-          await logger.info("Compacted: no largeContextFallback config, skipping", { sessionID: props.sessionID })
-          return
-        }
-
-        // If there's an active fork, inject a waiting notification and skip
-        const activeFork = hasActiveFork(props.sessionID)
-        if (activeFork) {
-          await logger.info("Compacted: active fork in progress, main session waits for fork result", {
-            sessionID: props.sessionID,
-          })
-          await showToastSafely(context, {
-            title: "Processing with Extended Context",
-            message: "A sub-agent is handling your last request with extended context. The session will resume automatically once it's complete.",
-            variant: "info",
-            duration: WAITING_TOAST_DURATION_MS,
-          }, logger)
-          return
-        }
-
-        // If compacted during large model work, wait for idle to switch back
         const phase = getLargeContextPhase(props.sessionID)
+        await logger.info("Compacted event received", {
+          sessionID: props.sessionID,
+          phase,
+        })
+
+        // After summarizing-phase compaction completes, the next idle triggers handleLargeContextCompletion.
+        // The compacting hook already set the correct prompt.
+        if (phase === "summarizing") {
+          await logger.info("Compacted: summarizing complete, next idle will switch back", {
+            sessionID: props.sessionID,
+          })
+          return
+        }
+
+        // Large model self-compaction: phase stays "active", next idle checks threshold again
         if (phase === "active") {
-          await logger.info("Compacted: auto-compacted during large model work, waiting for idle", {
+          await logger.info("Compacted: large model compaction complete, continuing", {
             sessionID: props.sessionID,
           })
           return
@@ -875,84 +935,126 @@ export async function createPlugin(context: PluginInput): Promise<PluginHooks> {
       }
       if (event.type === "session.idle") {
         const props = event.properties as { sessionID: string }
-        // Snapshot guard BEFORE threshold check; consume AFTER all handling
-        const guardActive = hasSwitchBackGuard(props.sessionID)
-
-        // ---- Threshold-based context switch (before large model phase) ----
-        const sessionPhase = getLargeContextPhase(props.sessionID)
+        const phase = getLargeContextPhase(props.sessionID)
         const lcf = config.largeContextFallback
-        if (lcf && sessionPhase !== "active" && sessionPhase !== "summarizing" && !hasActiveFork(props.sessionID) && !guardActive) {
-          try {
-            const msgResp = await context.client.session.messages({ path: { id: props.sessionID } })
-            const raw = (msgResp.data ?? []) as Array<{ info: { role: string; tokens?: { input: number; output?: number } } }>
-            const lastAsst = [...raw].reverse().find(m => m.info.role === "assistant")
-            const tokensInput = lastAsst?.info?.tokens?.input
-            const tokensOutput = lastAsst?.info?.tokens?.output
-            if (tokensInput !== undefined && tokensInput !== null) {
-              const parsed = parseModel(lcf.model)
-              const curModel = getCurrentModel(props.sessionID)
-              const agent = getSessionOriginalAgent(props.sessionID)
-              if (curModel && agent && isLargeContextAgent(agent, lcf.agents)) {
-                // Guard: already on large model
-                if (curModel.providerID === parsed.providerID && curModel.modelID === parsed.modelID) {
-                  return
-                }
-                // Guard: large model in cooldown
-                if (isModelInCooldown(parsed.providerID, parsed.modelID)) {
-                  return
-                }
-                const modelKey = `${curModel.providerID}/${curModel.modelID}`
-                const limit = getModelContextLimit(modelKey)
-                const largeModelKey = `${parsed.providerID}/${parsed.modelID}`
-                const largeLimit = getModelContextLimit(largeModelKey)
-                // Guard: context window ratio
-                if (limit && largeLimit && shouldSkipLargeContextFallback(limit, largeLimit, lcf.minContextRatio ?? 0.1)) {
-                  return
-                }
-                if (limit) {
-                  const usage = tokensInput + (tokensOutput ?? 0)
-                  const ratio = usage / limit
-                  await logger.info("Idle: context ratio", {
-                    sessionID: props.sessionID,
-                    tokensInput, tokensOutput,
-                    usage, limit,
-                    ratio: `${(ratio * 100).toFixed(1)}%`,
-                    exceed: ratio >= 0.80,
-                  })
-                  if (ratio >= 0.80) {
-                    const switched = await handleLargeContextSwitch(
-                      props.sessionID, lcf, context, logger,
-                      `Context at ${(ratio * 100).toFixed(1)}% (${usage}/${limit})`,
-                      true, // skipAbort — session already idle
-                    )
-                    if (switched) return
-                  }
-                }
-              }
+        const agent = getSessionOriginalAgent(props.sessionID)
+
+        // Phase: Normal / No phase — threshold check for model switch or manual compaction
+        if (!phase) {
+          // Fork result injection (legacy path)
+          const forkEntry = getForkTracking(props.sessionID)
+          if (forkEntry && forkEntry.status === "running") {
+            await injectForkResult(props.sessionID, forkEntry.mainSessionID, forkEntry.agent, context, logger)
+            return
+          }
+
+          if (!lcf || !agent) return
+
+          const thresholdResult = await checkContextThreshold(props.sessionID, context, logger)
+          if (!thresholdResult.atThreshold) return
+
+          if (isRegisteredAgent(agent)) {
+            // Registered agent: switch to large context model
+            const parsedModel = parseModel(lcf.model)
+            const curModel = getCurrentModel(props.sessionID)
+            if (curModel) {
+              // Guard: already on large model
+              if (curModel.providerID === parsedModel.providerID && curModel.modelID === parsedModel.modelID) return
+              // Guard: large model in cooldown
+              if (isModelInCooldown(parsedModel.providerID, parsedModel.modelID)) return
+              // Guard: context window ratio
+              const largeLimit = getModelContextLimit(`${parsedModel.providerID}/${parsedModel.modelID}`)
+              if (largeLimit && shouldSkipLargeContextFallback(thresholdResult.limit, largeLimit, lcf.minContextRatio ?? 0.1)) return
             }
-          } catch (err) {
-            await logger.info("Idle: fetch/parse error in threshold check", {
-              sessionID: props.sessionID,
-              error: err instanceof Error ? err.message : String(err),
+            await handleLargeContextSwitch(props.sessionID, lcf, context, logger, `Context at ${((thresholdResult.usage / thresholdResult.limit) * 100).toFixed(1)}%`)
+          } else {
+            // Non-registered agent: manually compact to preserve default compaction behavior
+            const curModel = getCurrentModel(props.sessionID)
+            await logger.info("Idle: non-registered agent threshold reached, triggering manual compact", {
+              sessionID: props.sessionID, agent,
+            })
+            await context.client.session.summarize({
+              path: { id: props.sessionID },
+              ...(curModel ? { body: { providerID: curModel.providerID, modelID: curModel.modelID } } : {}),
             })
           }
+          return
         }
 
-        if (sessionPhase === "active") {
-          if (lcf) {
-            await handleLargeContextCompletion(props.sessionID, lcf, context, logger)
-          } else {
+        // Phase: "pending" — model switch in progress, wait
+        if (phase === "pending") {
+          return
+        }
+
+        // Phase: "active" — on large model, check return condition or self-compaction
+        if (phase === "active") {
+          if (!lcf) {
             deleteLargeContextPhase(props.sessionID)
+            clearLargeModelIdle(props.sessionID)
+            return
           }
+
+          const hasChildren = await hasActiveChildren(props.sessionID, context)
+
+          // Priority 1: Check return condition (idle + no active children)
+          if (!hasChildren) {
+            // Check if auto-continue might still be in progress by examining last response for tool calls
+            let autoContinuePending = false
+            try {
+              const msgResp = await context.client.session.messages({ path: { id: props.sessionID } })
+              const raw = (msgResp.data ?? []) as Array<{ info: { role: string }; parts: Array<{ type: string; state?: { status: string } }> }>
+              const lastAsst = [...raw].reverse().find(m => m.info.role === "assistant")
+              if (lastAsst) {
+                // Only block if tool parts are still pending/running (auto-continue will fire to complete them)
+                // Session.idle implies all steps are finished, so step-start alone doesn't indicate pending work
+                autoContinuePending = lastAsst.parts.some(
+                  p => p.type === "tool" && (p.state?.status === "pending" || p.state?.status === "running")
+                )
+              }
+            } catch { /* safe default: assume no auto-continue pending */ }
+
+            if (!autoContinuePending) {
+              await logger.info("Idle: return condition met (no children, no pending tools)", {
+                sessionID: props.sessionID,
+              })
+              clearLargeModelIdle(props.sessionID)
+              await handleLargeContextReturn(props.sessionID, context, logger)
+              return
+            }
+            await logger.info("Idle: return waiting —pending tool calls in last response", {
+              sessionID: props.sessionID,
+            })
+          }
+
+          // Priority 2: Return condition NOT met — check if large model needs self-compaction
+          const largeThreshold = await checkContextThreshold(props.sessionID, context, logger)
+          if (largeThreshold.atThreshold) {
+            await logger.info("Idle: large model context full, triggering manual compact", {
+              sessionID: props.sessionID,
+            })
+            const lcfParsed = parseModel(lcf.model)
+            setCompactionTarget(props.sessionID, "large")
+            try {
+              await context.client.session.summarize({
+                path: { id: props.sessionID },
+                body: { providerID: lcfParsed.providerID, modelID: lcfParsed.modelID },
+              })
+            } catch {
+              clearCompactionTarget(props.sessionID)
+              await logger.info("Idle: self-compaction failed, cleared compactionTarget", {
+                sessionID: props.sessionID,
+              })
+            }
+            return
+          }
+          return
         }
 
-        const forkEntry = getForkTracking(props.sessionID)
-        if (forkEntry && forkEntry.status === "running") {
-          await injectForkResult(props.sessionID, forkEntry.mainSessionID, forkEntry.agent, context, logger)
+        // Phase: "summarizing" — compaction done, complete switch-back
+        if (phase === "summarizing" && lcf) {
+          await handleLargeContextCompletion(props.sessionID, lcf, context, logger)
+          return
         }
-
-        // Consume switch-back guard AFTER all handling (threshold already checked with snapshot)
-        consumeSwitchBackGuard(props.sessionID)
       }
       if (event.type === "session.status") {
         const props = event.properties as {
@@ -1037,6 +1139,8 @@ export const _forTesting = {
   tryFallbackChain,
   showToastSafely,
   revertAndPrompt,
-  isLargeContextAgent,
   shouldSkipLargeContextFallback,
+  contextWindowFor,
+  hasActiveChildren,
+  checkContextThreshold,
 }

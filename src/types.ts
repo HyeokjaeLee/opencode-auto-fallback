@@ -107,6 +107,8 @@ export interface ForkTrackingEntry {
   lastRequest?: string
 }
 
+export type LargeContextPhase = "pending" | "active" | "summarizing"
+
 export interface ToastOptions {
   title?: string
   message: string
