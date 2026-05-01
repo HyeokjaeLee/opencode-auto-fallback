@@ -117,8 +117,6 @@ async function checkContextThreshold(
     // The very last message may have input=0 if the SDK hasn't populated it yet,
     // so we scan backwards for the most recent message with real data.
     let asstCount = 0
-    let lastInput = 0
-    let lastOutput = 0
     let cumulativeInput = 0
     let cumulativeOutput = 0
     let maxInput = 0
@@ -131,16 +129,14 @@ async function checkContextThreshold(
         cumulativeInput += inVal
         cumulativeOutput += outVal
         if (inVal > maxInput) maxInput = inVal
-        if (inVal > 0) {
-          lastInput = inVal
-          lastOutput = outVal
-        }
       }
     }
 
-    // Use the last non-zero assistant message's input as the cumulative context
-    const tokensInput = lastInput
-    const tokensOutput = lastOutput
+    // Use cumulative sum of all assistant message tokens as a RELATIVE measure.
+    // This may differ from the TUI's absolute value (TUI includes system prompt,
+    // tool definitions, etc.) but grows proportionally with real context usage.
+    const tokensInput = cumulativeInput
+    const tokensOutput = cumulativeOutput
 
     if (asstCount === 0 || tokensInput === 0) {
       await logger.info("Idle: no assistant messages with token data", { sessionID })
@@ -155,13 +151,11 @@ async function checkContextThreshold(
 
     const usage = tokensInput + tokensOutput
 
-    // Diagnostic: compare with sum approach and maxInput for verification
+    // Diagnostic: individual message tokens for verification
     const diagnostic = {
       sumInput: cumulativeInput,
       sumOutput: cumulativeOutput,
       maxInput,
-      lastNonZeroInput: tokensInput,
-      lastNonZeroOutput: tokensOutput,
     }
 
     const reserved = getCompactionReserved()
