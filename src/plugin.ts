@@ -681,6 +681,32 @@ export async function createPlugin(context: PluginInput): Promise<PluginHooks> {
         }
       }
 
+      // Pre-generation context threshold check
+      // session.idle doesn't fire during auto-continue chains, so threshold would never
+      // be checked without this proactive check before every generation.
+      if (!getLargeContextPhase(input.sessionID)) {
+        const lcf = config.largeContextFallback
+        if (lcf && input.agent && isRegisteredAgent(input.agent)) {
+          const threshold = await checkContextThreshold(input.sessionID, context, logger)
+          if (threshold.atThreshold) {
+            await logger.info("Pre-generation threshold exceeded, abort+switch", {
+              sessionID: input.sessionID,
+              usage: threshold.usage,
+              limit: threshold.limit,
+            })
+            try {
+              await context.client.session.abort({ path: { id: input.sessionID } })
+              await new Promise(resolve => setTimeout(resolve, ABORT_DELAY_MS))
+            } catch { /* session may already be idle */ }
+            try {
+              const switched = await handleLargeContextSwitch(input.sessionID, lcf, context, logger,
+                `Context at ${((threshold.usage / threshold.limit) * 100).toFixed(1)}%`)
+              if (switched) return
+            } catch { /* switch failed, original generation proceeds */ }
+          }
+        }
+      }
+
       const fallback = getAndClearFallbackParams(input.sessionID)
       if (!fallback) return
       await logger.info("Applying fallback model params", {
