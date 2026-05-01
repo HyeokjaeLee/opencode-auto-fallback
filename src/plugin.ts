@@ -614,8 +614,10 @@ export async function createPlugin(context: PluginInput): Promise<PluginHooks> {
     },
     "chat.params": async (input, output) => {
       // Track the agent for this session (needed by threshold-based large context switch
-      // since compacting hook never fires with auto:false)
-      if (input.agent) {
+      // since compacting hook never fires with auto:false).
+      // Only set once — subsequent generations (e.g. auto-title with agent "title")
+      // must NOT overwrite the original agent.
+      if (input.agent && !getSessionOriginalAgent(input.sessionID)) {
         setSessionOriginalAgent(input.sessionID, input.agent)
       }
       if (input.model) {
