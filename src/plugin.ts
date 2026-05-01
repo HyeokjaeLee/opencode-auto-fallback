@@ -292,6 +292,7 @@ async function handleLargeContextSwitch(
   context: PluginInput,
   logger: ReturnType<typeof createLogger>,
   errorMessage: string,
+  skipAbort = false,
 ): Promise<boolean> {
   const agent = getSessionOriginalAgent(sessionID)
   if (!agent || !isLargeContextAgent(agent, lcf.agents)) return false
@@ -319,7 +320,10 @@ async function handleLargeContextSwitch(
     setRestoreModel(sessionID, currentModel.providerID, currentModel.modelID)
   }
 
-  await abortSession(sessionID, context)
+  // Skip abort when called from session.idle (session already idle — abort would fail)
+  if (!skipAbort) {
+    await abortSession(sessionID, context)
+  }
 
   setLargeContextPhase(sessionID, "active")
   // Apply the large model's params (temperature, etc.) via fallback params
@@ -663,7 +667,12 @@ export async function createPlugin(context: PluginInput): Promise<PluginHooks> {
         `Compaction triggered at context limit`,
       )
 
-      if (switched) return
+      if (switched) {
+        // Safety net: if OpenCode still compacts after our switch,
+        // minimize disruption with a simple continuation prompt.
+        output.prompt = "Continue the current work. A large context model is now handling the session."
+        return
+      }
 
       // Switch failed — let normal compaction proceed as fallback.
       await logger.warn("Compacting: switch failed, falling back to default compaction", {
@@ -927,6 +936,7 @@ export async function createPlugin(context: PluginInput): Promise<PluginHooks> {
                     const switched = await handleLargeContextSwitch(
                       props.sessionID, lcf, context, logger,
                       `Context at ${(ratio * 100).toFixed(1)}% (${usage}/${limit})`,
+                      true, // skipAbort — session already idle
                     )
                     if (switched) return
                   }
