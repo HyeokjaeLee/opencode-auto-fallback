@@ -881,41 +881,46 @@ export async function createPlugin(context: PluginInput): Promise<PluginHooks> {
       if (event.type === "session.idle") {
         const props = event.properties as { sessionID: string }
 
-        // DIAGNOSTIC: Log fork session completion with token usage
-        if (getForkTracking(props.sessionID)) {
+        // ---- Threshold-based context switch (before large model phase) ----
+        const sessionPhase = getLargeContextPhase(props.sessionID)
+        const lcf = config.largeContextFallback
+        if (lcf && sessionPhase !== "active" && sessionPhase !== "summarizing") {
           try {
             const msgResp = await context.client.session.messages({ path: { id: props.sessionID } })
-            const raw = (msgResp.data ?? []) as Array<{ info: { role: string; tokens?: { input: number; output: number } } }>
+            const raw = (msgResp.data ?? []) as Array<{ info: { role: string; tokens?: { input: number } } }>
             const lastAsst = [...raw].reverse().find(m => m.info.role === "assistant")
-            if (lastAsst?.info?.tokens) {
+            if (lastAsst?.info?.tokens?.input) {
               const curModel = getCurrentModel(props.sessionID)
-              const modelKey = curModel ? `${curModel.providerID}/${curModel.modelID}` : "unknown"
-              const limit = getModelContextLimit(modelKey)
-              await logger.info("🔍 FORK SESSION: idle with token info", {
-                sessionID: props.sessionID,
-                model: modelKey,
-                modelLimit: limit ?? "unknown",
-                tokensInput: lastAsst.info.tokens.input,
-                tokensOutput: lastAsst.info.tokens.output,
-                estimatedUsage: `${lastAsst.info.tokens.input + lastAsst.info.tokens.output}`,
-                usagePct: limit ? `${((lastAsst.info.tokens.input + lastAsst.info.tokens.output) / limit * 100).toFixed(1)}%` : "unknown",
-              })
-            } else {
-              await logger.info("🔍 FORK SESSION: idle (no token info available)", {
-                sessionID: props.sessionID,
-              })
+              if (curModel) {
+                const modelKey = `${curModel.providerID}/${curModel.modelID}`
+                const limit = getModelContextLimit(modelKey)
+                if (limit) {
+                  const usage = lastAsst.info.tokens.input
+                  const ratio = usage / limit
+                  if (ratio >= 0.90) {
+                    const agent = getSessionOriginalAgent(props.sessionID)
+                    if (agent && isLargeContextAgent(agent, lcf.agents)) {
+                      await logger.info("Context threshold exceeded, switching to large model", {
+                        sessionID: props.sessionID,
+                        usage, limit, ratio: `${(ratio * 100).toFixed(1)}%`,
+                        agent, largeModel: lcf.model,
+                      })
+                      await handleLargeContextSwitch(
+                        props.sessionID, lcf, context, logger,
+                        `Context at ${(ratio * 100).toFixed(1)}% (${usage}/${limit})`,
+                      )
+                      return
+                    }
+                  }
+                }
+              }
             }
-          } catch (err) {
-            await logger.warn("🔍 FORK SESSION: idle — failed to fetch messages", {
-              sessionID: props.sessionID,
-              error: err instanceof Error ? err.message : String(err),
-            })
+          } catch {
+            // Non-critical — suppress fetch errors
           }
         }
 
-        const phase = getLargeContextPhase(props.sessionID)
-        if (phase === "active") {
-          const lcf = config.largeContextFallback
+        if (sessionPhase === "active") {
           if (lcf) {
             await handleLargeContextCompletion(props.sessionID, lcf, context, logger)
           } else {
