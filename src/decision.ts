@@ -1,5 +1,5 @@
 import type { FallbackDecision } from "./types"
-import { IMMEDIATE_STATUS_CODES, RETRYABLE_STATUS_CODES, TRANSIENT_ERROR_PATTERNS, PERMANENT_RATE_LIMIT_PATTERNS } from "./constants"
+import { IMMEDIATE_STATUS_CODES, RETRYABLE_STATUS_CODES, TRANSIENT_ERROR_PATTERNS, PERMANENT_RATE_LIMIT_PATTERNS, CONTEXT_OVERFLOW_PATTERNS } from "./constants"
 
 export function classifyError(
   statusCode: number | undefined,
@@ -35,4 +35,9 @@ export function isTransientErrorMessage(message: string): boolean {
 export function isPermanentRateLimitMessage(message: string): boolean {
   const lower = message.toLowerCase()
   return PERMANENT_RATE_LIMIT_PATTERNS.some(pattern => lower.includes(pattern))
+}
+
+export function isContextOverflowError(message: string): boolean {
+  const lower = message.toLowerCase()
+  return CONTEXT_OVERFLOW_PATTERNS.some(pattern => lower.includes(pattern))
 }

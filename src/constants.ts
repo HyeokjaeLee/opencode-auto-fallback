@@ -28,6 +28,19 @@ export const PERMANENT_RATE_LIMIT_PATTERNS: readonly string[] = [
   "billing",
 ]
 
+export const CONTEXT_OVERFLOW_PATTERNS: readonly string[] = [
+  "context length",
+  "maximum context",
+  "too many tokens",
+  "token limit",
+  "context length exceeded",
+  "max_tokens",
+  "maximum prompt length",
+  "context window",
+  "input too long",
+  "request too large",
+]
+
 /** Delay after aborting a session before sending a new prompt (ms) */
 export const ABORT_DELAY_MS = 300
 

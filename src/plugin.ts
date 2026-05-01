@@ -9,7 +9,7 @@ type PluginHooks = Hooks & {
 }
 import type { FallbackConfig, FallbackModel, ToastOptions } from "./types"
 import { getFallbackChain, loadConfig, normalizeAgentName, parseModel } from "./config"
-import { classifyError, isTransientErrorMessage, isPermanentRateLimitMessage } from "./decision"
+import { classifyError, isTransientErrorMessage, isPermanentRateLimitMessage, isContextOverflowError } from "./decision"
 import {
   BACKOFF_BASE_MS,
   ABORT_DELAY_MS,
@@ -284,6 +284,86 @@ async function handleImmediate(
   await tryFallbackChain(sessionID, chain, extracted.info.agent, extracted.parts, extracted.info.id, logger, context)
 }
 
+async function handleLargeContextSwitch(
+  sessionID: string,
+  lcf: NonNullable<FallbackConfig["largeContextFallback"]>,
+  context: PluginInput,
+  logger: ReturnType<typeof createLogger>,
+  errorMessage: string,
+): Promise<boolean> {
+  const agent = getSessionOriginalAgent(sessionID)
+  if (!agent || !isLargeContextAgent(agent, lcf.agents)) return false
+
+  // Prevent infinite loop — already in large model mode
+  const phase = getLargeContextPhase(sessionID)
+  if (phase === "active" || phase === "summarizing") return false
+
+  const parsed = parseModel(lcf.model)
+  const original = getOriginalModel(sessionID)
+  if (!original) return false
+
+  const { extracted } = await fetchSessionData(sessionID, context, logger)
+  if (!extracted) return false
+
+  await logger.info("Context overflow: switching to large model in-place", {
+    sessionID, agent, largeModel: lcf.model,
+    fromModel: `${original.providerID}/${original.modelID}`,
+    error: errorMessage,
+  })
+
+  await abortSession(sessionID, context)
+
+  setLargeContextPhase(sessionID, "active")
+  // Apply the large model's params (temperature, etc.) via fallback params
+  setActiveFallbackParams(sessionID, { providerID: parsed.providerID, modelID: parsed.modelID })
+
+  const ok = await revertAndPrompt(
+    sessionID, agent, extracted.parts, extracted.info.id,
+    { providerID: parsed.providerID, modelID: parsed.modelID },
+    logger, context,
+  )
+
+  if (ok) {
+    await showToastSafely(context, {
+      title: "Context Overflow",
+      message: `Switched to ${lcf.model} for extended context`,
+      variant: "info",
+      duration: TOAST_DURATION_MS,
+    }, logger)
+  } else {
+    deleteLargeContextPhase(sessionID)
+    await logger.error("Failed to switch to large context model", { sessionID, largeModel: lcf.model })
+  }
+  return ok
+}
+
+async function handleLargeContextCompletion(
+  sessionID: string,
+  _lcf: NonNullable<FallbackConfig["largeContextFallback"]>,
+  context: PluginInput,
+  logger: ReturnType<typeof createLogger>,
+): Promise<void> {
+  const original = getOriginalModel(sessionID)
+  if (!original) return
+
+  await logger.info("Large context work done, compacting for switch-back", {
+    sessionID, originalModel: `${original.providerID}/${original.modelID}`,
+  })
+
+  setLargeContextPhase(sessionID, "summarizing")
+  try {
+    await context.client.session.summarize({
+      path: { id: sessionID },
+      body: { providerID: original.providerID, modelID: original.modelID },
+    })
+  } catch (err) {
+    await logger.error("Summarize failed during switch-back", {
+      sessionID, error: err instanceof Error ? err.message : String(err),
+    })
+    deleteLargeContextPhase(sessionID)
+  }
+}
+
 export async function createPlugin(context: PluginInput): Promise<PluginHooks> {
   const config = loadConfig()
   const logger = createLogger(config.logging)
@@ -335,6 +415,15 @@ export async function createPlugin(context: PluginInput): Promise<PluginHooks> {
   })
 
   return {
+    config: async (input) => {
+      const lcf = config.largeContextFallback
+      if (!lcf) return
+      ;(input as any).compaction = (input as any).compaction || {}
+      ;(input as any).compaction.auto = false
+      await logger.info("Config: disabled auto-compaction (large context fallback active)", {
+        largeModel: lcf.model,
+      })
+    },
     "chat.params": async (input, output) => {
       if (input.model) {
         const { changed, previous: prev } = hasModelChanged(
@@ -423,6 +512,16 @@ export async function createPlugin(context: PluginInput): Promise<PluginHooks> {
     },
     "experimental.session.compacting": async (input, output) => {
       await logger.info("Compacting hook fired", { sessionID: input.sessionID })
+
+      // ---- Summarizing phase: compacting to switch back to original model ----
+      if (getLargeContextPhase(input.sessionID) === "summarizing") {
+        output.context = []
+        output.prompt = "The conversation was handed off to a large context model due to context overflow. The large model completed the work. Preserve the key results below:\n\n- What the user requested\n- What the large model accomplished\n- Key files changed or decisions made\n- Current task status\n\nFormat as a clear summary so the original model can continue seamlessly."
+        await logger.info("Compacting: custom prompt for summarizing phase (switch-back)", {
+          sessionID: input.sessionID,
+        })
+        return
+      }
 
       // ---- Fork session: replace compaction prompt with continuation instruction ----
       const forkEntry = getForkTracking(input.sessionID)
@@ -627,6 +726,16 @@ export async function createPlugin(context: PluginInput): Promise<PluginHooks> {
           return
         }
 
+        // Context overflow detection — switch to large model in-place
+        if (err.data?.message && isContextOverflowError(err.data.message)) {
+          const lcf = config.largeContextFallback
+          if (lcf) {
+            const switched = await handleLargeContextSwitch(sessionID, lcf, context, logger, err.data.message)
+            if (switched) return
+            // Switch failed — fall through to normal error handling
+          }
+        }
+
         const isAuthError = err.name === "ProviderAuthError"
         const isModelNotFoundError =
           err.name === "ProviderModelNotFoundError" ||
@@ -725,6 +834,16 @@ export async function createPlugin(context: PluginInput): Promise<PluginHooks> {
           return
         }
 
+        // "active" without "summarizing" means the large model's session got compacted
+        // (e.g., user manually ran /compact). Don't switch back — just clean up.
+        if (phase === "active") {
+          deleteLargeContextPhase(props.sessionID)
+          await logger.info("Compacted: large model session compacted (likely manual), phase cleaned", {
+            sessionID: props.sessionID,
+          })
+          return
+        }
+
         deleteLargeContextPhase(props.sessionID)
 
         const { extracted } = await fetchSessionData(props.sessionID, context, logger)
@@ -741,7 +860,7 @@ export async function createPlugin(context: PluginInput): Promise<PluginHooks> {
           return
         }
 
-        await logger.info("Compacted: switching back to original model", {
+        await logger.info("Compacted: switching back to original model after large context", {
           sessionID: props.sessionID, original,
         })
         const ok = await revertAndPrompt(
@@ -796,10 +915,12 @@ export async function createPlugin(context: PluginInput): Promise<PluginHooks> {
 
         const phase = getLargeContextPhase(props.sessionID)
         if (phase === "active") {
-          await logger.info("Idle: large model finished, cleaning up phase (no compact triggered)", {
-            sessionID: props.sessionID,
-          })
-          deleteLargeContextPhase(props.sessionID)
+          const lcf = config.largeContextFallback
+          if (lcf) {
+            await handleLargeContextCompletion(props.sessionID, lcf, context, logger)
+          } else {
+            deleteLargeContextPhase(props.sessionID)
+          }
         }
 
         const forkEntry = getForkTracking(props.sessionID)
