@@ -337,6 +337,8 @@ async function handleLargeContextSwitch(
   return ok
 }
 
+const SUMMARIZE_TIMEOUT_MS = 60_000
+
 async function handleLargeContextCompletion(
   sessionID: string,
   _lcf: NonNullable<FallbackConfig["largeContextFallback"]>,
@@ -362,6 +364,15 @@ async function handleLargeContextCompletion(
     })
     deleteLargeContextPhase(sessionID)
   }
+
+  // If session.compacted doesn't fire within the timeout, clean up
+  setTimeout(() => {
+    const phase = getLargeContextPhase(sessionID)
+    if (phase === "summarizing") {
+      deleteLargeContextPhase(sessionID)
+      logger.warn("Summarize timeout: phase cleaned up", { sessionID })
+    }
+  }, SUMMARIZE_TIMEOUT_MS)
 }
 
 export async function createPlugin(context: PluginInput): Promise<PluginHooks> {
@@ -520,7 +531,6 @@ export async function createPlugin(context: PluginInput): Promise<PluginHooks> {
 
       // ---- Summarizing phase: compacting to switch back to original model ----
       if (getLargeContextPhase(input.sessionID) === "summarizing") {
-        output.context = []
         output.prompt = "The conversation was handed off to a large context model due to context overflow. The large model completed the work. Preserve the key results below:\n\n- What the user requested\n- What the large model accomplished\n- Key files changed or decisions made\n- Current task status\n\nFormat as a clear summary so the original model can continue seamlessly."
         await logger.info("Compacting: custom prompt for summarizing phase (switch-back)", {
           sessionID: input.sessionID,
@@ -905,11 +915,26 @@ export async function createPlugin(context: PluginInput): Promise<PluginHooks> {
             const tokensInput = lastAsst?.info?.tokens?.input
             const tokensOutput = lastAsst?.info?.tokens?.output
             if (tokensInput !== undefined && tokensInput !== null) {
+              const parsed = parseModel(lcf.model)
               const curModel = getCurrentModel(props.sessionID)
               const agent = getSessionOriginalAgent(props.sessionID)
-              if (curModel) {
+              if (curModel && agent && isLargeContextAgent(agent, lcf.agents)) {
+                // Guard: already on large model
+                if (curModel.providerID === parsed.providerID && curModel.modelID === parsed.modelID) {
+                  return
+                }
+                // Guard: large model in cooldown
+                if (isModelInCooldown(parsed.providerID, parsed.modelID)) {
+                  return
+                }
                 const modelKey = `${curModel.providerID}/${curModel.modelID}`
                 const limit = getModelContextLimit(modelKey)
+                const largeModelKey = `${parsed.providerID}/${parsed.modelID}`
+                const largeLimit = getModelContextLimit(largeModelKey)
+                // Guard: context window ratio
+                if (limit && largeLimit && shouldSkipLargeContextFallback(limit, largeLimit, lcf.minContextRatio ?? 0.1)) {
+                  return
+                }
                 if (limit) {
                   const usage = tokensInput + (tokensOutput ?? 0)
                   const ratio = usage / limit
@@ -920,29 +945,15 @@ export async function createPlugin(context: PluginInput): Promise<PluginHooks> {
                     ratio: `${(ratio * 100).toFixed(1)}%`,
                     exceed: ratio >= 0.80,
                   })
-                  if (ratio >= 0.80 && agent && isLargeContextAgent(agent, lcf.agents)) {
-                    await logger.info("Context threshold exceeded, switching to large model", {
-                      sessionID: props.sessionID,
-                      usage, limit, ratio: `${(ratio * 100).toFixed(1)}%`,
-                      agent, largeModel: lcf.model,
-                    })
-                    await handleLargeContextSwitch(
+                  if (ratio >= 0.80) {
+                    const switched = await handleLargeContextSwitch(
                       props.sessionID, lcf, context, logger,
                       `Context at ${(ratio * 100).toFixed(1)}% (${usage}/${limit})`,
                     )
-                    return
+                    if (switched) return
                   }
-                } else {
-                  await logger.info("Idle: no context limit found for model", {
-                    sessionID: props.sessionID, modelKey,
-                  })
                 }
               }
-            } else {
-              await logger.info("Idle: no tokens.input in last assistant", {
-                sessionID: props.sessionID,
-                hasTokens: !!lastAsst?.info?.tokens,
-              })
             }
           } catch (err) {
             await logger.info("Idle: fetch/parse error in threshold check", {
