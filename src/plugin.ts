@@ -1096,11 +1096,11 @@ export async function createPlugin(context: PluginInput): Promise<PluginHooks> {
           if (originalLimit) {
             const targetTokens = Math.floor(originalLimit * 0.2);
             output.context.push(
-              `Use at most ${targetTokens} tokens for this summary. Preserve: user request, accomplishments, key files changed, decisions made, and current task status.`,
+              `Reduce to at most ${targetTokens} tokens.`,
             );
           } else {
             output.context.push(
-              `The session resumes on the original model (${original.providerID}/${original.modelID}) after compaction. Keep the summary very concise. Preserve: user request, accomplishments, key files, decisions, and status.`,
+              `Reduce to at most 10000 tokens.`,
             );
           }
           await logger.info(
