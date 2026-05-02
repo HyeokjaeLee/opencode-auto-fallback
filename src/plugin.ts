@@ -1100,7 +1100,7 @@ export async function createPlugin(context: PluginInput): Promise<PluginHooks> {
             );
           } else {
             output.context.push(
-              `The session will resume on the original model (${original.providerID}/${original.modelID}) after compaction. Preserve: user request, large model accomplishments, key files, decisions, and current status. Keep the summary concise.`,
+              `The session resumes on the original model (${original.providerID}/${original.modelID}) after compaction. Keep the summary very concise. Preserve: user request, accomplishments, key files, decisions, and status.`,
             );
           }
           await logger.info(
