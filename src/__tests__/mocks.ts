@@ -10,6 +10,7 @@ export function createMockContext(overrides?: {
   showToast?: ReturnType<typeof vi.fn>
   get?: ReturnType<typeof vi.fn>
   summarize?: ReturnType<typeof vi.fn>
+  status?: ReturnType<typeof vi.fn>
 }) {
   const mockAbort = overrides?.abort ?? vi.fn().mockResolvedValue(undefined)
   const mockChildren = overrides?.children ?? vi.fn().mockResolvedValue({ data: [] })
@@ -19,6 +20,7 @@ export function createMockContext(overrides?: {
   const mockShowToast = overrides?.showToast ?? vi.fn().mockResolvedValue(true)
   const mockGet = overrides?.get ?? vi.fn().mockResolvedValue({ data: { id: "test-session", title: "test" } })
   const mockSummarize = overrides?.summarize ?? vi.fn().mockResolvedValue({ data: null })
+  const mockStatus = overrides?.status ?? vi.fn().mockResolvedValue({ data: {} })
 
   return {
     client: {
@@ -30,6 +32,7 @@ export function createMockContext(overrides?: {
         prompt: mockPrompt,
         revert: mockRevert,
         summarize: mockSummarize,
+        status: mockStatus,
       },
       tui: {
         showToast: mockShowToast,

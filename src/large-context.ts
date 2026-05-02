@@ -44,11 +44,11 @@ export async function hasActiveChildren(
     >;
     for (const c of children) {
       const s = allStatuses[c.id];
-      if (!s || s.type === "busy" || s.type === "retry") return true;
+      if (s?.type === "busy" || s?.type === "retry") return true;
     }
     return false;
-  } catch { /* non-critical: children API may fail, fail-closed to prevent premature return */
-    return true;
+  } catch { /* non-critical: children API may fail, fail-open — stale or missing status means child is done */
+    return false;
   }
 }
 

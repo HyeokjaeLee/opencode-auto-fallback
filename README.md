@@ -110,11 +110,11 @@ When an agent's context window fills up mid-task, automatically switch to a larg
 }
 ```
 
-| Field             | Description                                                                                     |
-| ----------------- | ----------------------------------------------------------------------------------------------- |
-| `agents`          | List of agent names to apply this behavior to                                                   |
-| `model`           | Model to switch to when context fills up                                                        |
-| `minContextRatio` | Minimum fractional increase in context window to trigger fallback (default `0.1` = 10%)         |
+| Field             | Description                                                                             |
+| ----------------- | --------------------------------------------------------------------------------------- |
+| `agents`          | List of agent names to apply this behavior to                                           |
+| `model`           | Model to switch to when context fills up                                                |
+| `minContextRatio` | Minimum fractional increase in context window to trigger fallback (default `0.1` = 10%) |
 
 The plugin reads context window sizes from the SDK's model metadata automatically (`input.model.limit.context`). When both the current model and the large fallback model have been used in the session, their limits are known and the 10% ratio check is applied. If the large model hasn't been used yet (first compact), its limit is unknown and the fallback proceeds without the ratio check.
 
@@ -133,7 +133,7 @@ original model working → context full → auto compact triggered
 
 #### Behavior Details
 
-- **In-Place Model Switch**: When compaction triggers, the plugin switches the model within the same session. No session forking — the large model continues directly.
+- **In-Place Model Switch**: When compaction triggers, the plugin switches the model within the same session.
 - **Auto-Continue Enabled**: Auto-continue is explicitly enabled during large context phases (`active`/`summarizing`) so the session keeps working.
 - **Self-Compaction**: If the large model itself fills up, the plugin triggers self-compaction on the large model to preserve context.
 - **Switch-Back via Compaction**: When work completes, the session compacts with the original model's context limit as guidance, then switches back.
@@ -163,14 +163,14 @@ Each entry in a fallback chain can be a simple string or an object:
 
 The plugin detects errors through `session.error` events (structured `statusCode` and `isRetryable` flags) and `session.status` events (message-based pattern matching for rate limits and transient errors).
 
-| Error type                  | Detection                               | Action                                      |
-| --------------------------- | --------------------------------------- | ------------------------------------------- |
-| **HTTP 401/402/403** (auth) | Status code in `IMMEDIATE_STATUS_CODES` | Immediate fallback                          |
-| **Retryable errors**        | `isRetryable === true` from SDK         | Backoff retry (2s → 4s → 8s…) then fallback |
-| **HTTP 429/5xx**            | Status code in `RETRYABLE_STATUS_CODES` | Backoff retry then fallback                 |
-| **Permanent rate limit**    | Text patterns: "usage limit", "quota exceeded", etc. | Immediate fallback |
-| **Transient errors**        | Text patterns: "rate limit", "overloaded", etc. | Allow SDK retry up to `maxRetries`, then fallback |
-| **Unknown errors**          | Default classification                  | Backoff retry then fallback _(safety net)_  |
+| Error type                  | Detection                                            | Action                                            |
+| --------------------------- | ---------------------------------------------------- | ------------------------------------------------- |
+| **HTTP 401/402/403** (auth) | Status code in `IMMEDIATE_STATUS_CODES`              | Immediate fallback                                |
+| **Retryable errors**        | `isRetryable === true` from SDK                      | Backoff retry (2s → 4s → 8s…) then fallback       |
+| **HTTP 429/5xx**            | Status code in `RETRYABLE_STATUS_CODES`              | Backoff retry then fallback                       |
+| **Permanent rate limit**    | Text patterns: "usage limit", "quota exceeded", etc. | Immediate fallback                                |
+| **Transient errors**        | Text patterns: "rate limit", "overloaded", etc.      | Allow SDK retry up to `maxRetries`, then fallback |
+| **Unknown errors**          | Default classification                               | Backoff retry then fallback _(safety net)_        |
 
 ### Retry Flow
 
