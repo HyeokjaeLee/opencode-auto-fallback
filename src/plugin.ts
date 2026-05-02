@@ -467,19 +467,27 @@ async function handleLargeContextSwitch(
     }
 
     // NO revert — all context is preserved. The last assistant response stays in history.
-    // Prompt with large model + continuation text to continue from where the small model left off.
     setActiveFallbackParams(sessionID, { providerID: parsed.providerID, modelID: parsed.modelID })
-    await context.client.session.prompt({
+
+    // CRITICAL: Set phase to "active" BEFORE session.prompt(). prompt() blocks until
+    // model responds (~minutes), so setting phase after locks it at "pending" during
+    // the entire work cycle — breaking idle return, self-compaction, and compacting hook.
+    setLargeContextPhase(sessionID, "active")
+    clearLargeModelIdle(sessionID)
+
+    context.client.session.prompt({
       path: { id: sessionID },
       body: {
         model: { providerID: parsed.providerID, modelID: parsed.modelID },
         agent,
         parts: [{ type: "text" as const, text: LARGE_CONTEXT_CONTINUATION }],
       },
+    }).catch(async (err) => {
+      await logger.warn("Large model continuation prompt failed (phase already active)", {
+        sessionID, error: err instanceof Error ? err.message : String(err),
+      })
     })
 
-    setLargeContextPhase(sessionID, "active")
-    clearLargeModelIdle(sessionID)
     return true
   } catch (err) {
     deleteLargeContextPhase(sessionID)
