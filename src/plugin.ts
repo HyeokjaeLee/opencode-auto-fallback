@@ -480,12 +480,6 @@ async function handleLargeContextSwitch(
 
     setLargeContextPhase(sessionID, "active")
     clearLargeModelIdle(sessionID)
-    await showToastSafely(context, {
-      title: "Extended Context",
-      message: `Switched to ${lcf.model} for expanded capacity`,
-      variant: "info",
-      duration: TOAST_DURATION_MS,
-    }, logger)
     return true
   } catch (err) {
     deleteLargeContextPhase(sessionID)
