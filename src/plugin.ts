@@ -514,20 +514,29 @@ async function handleLargeContextReturn(
     return
   }
 
-  await logger.info("Return condition: switching back to original model", {
+  // Use the large model for compaction so it can SEE the full context.
+  // The compacting hook already instructs it to produce a summary that
+  // fits within the original model's limit.
+  const current = getCurrentModel(sessionID)
+  const compactModel = current ?? original
+
+  await logger.info("Return condition: compacting with large model for switch-back", {
     sessionID, originalModel: `${original.providerID}/${original.modelID}`,
+    compactModel: `${compactModel.providerID}/${compactModel.modelID}`,
   })
 
   setLargeContextPhase(sessionID, "summarizing")
 
-  // Trigger compaction using ORIGINAL model to enforce default model's context limit
+  // Trigger compaction using LARGE model (full context visibility).
+  // The compacting hook (phase=summarizing) appends instructions to fit within
+  // the original model's limit. Actual switch-back happens in
+  // session.compacted → session.idle when phase=summarizing.
   try {
     await context.client.session.summarize({
       path: { id: sessionID },
-      body: { providerID: original.providerID, modelID: original.modelID },
+      body: { providerID: compactModel.providerID, modelID: compactModel.modelID },
     })
-    await logger.info("Return: compaction triggered for switch-back", { sessionID, model: original })
-    // Actual switch-back happens in session.compacted → session.idle when phase=summarizing
+    await logger.info("Return: compaction triggered for switch-back", { sessionID, compactModel })
   } catch (err) {
     await logger.error("Return: compaction failed", {
       sessionID, error: err instanceof Error ? err.message : String(err),
