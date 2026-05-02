@@ -548,6 +548,7 @@ async function handleLargeContextReturn(
 
 async function handleLargeContextCompletion(
   sessionID: string,
+  context: PluginInput,
   logger: ReturnType<typeof createLogger>,
 ): Promise<void> {
   const original = getRestoreModel(sessionID) ?? getOriginalModel(sessionID)
@@ -558,18 +559,32 @@ async function handleLargeContextCompletion(
     return
   }
 
-  await logger.info("Large context work done, compaction complete", {
+  await logger.info("Large context work done, compaction complete, restoring model", {
     sessionID, originalModel: `${original.providerID}/${original.modelID}`,
   })
 
-  // Work is already done and context is compacted. No continuation prompt needed —
-  // the session is idle with the compacted context. The next user message
-  // will use whichever model the session routes to naturally.
   deleteLargeContextPhase(sessionID)
   deleteRestoreModel(sessionID)
-  await logger.info("Switch-back complete, session ready for next user input", {
-    sessionID, originalModel: `${original.providerID}/${original.modelID}`,
-  })
+
+  // Send continuation on original model to resume work with compacted context.
+  // This mirrors oh-my-openagent's approach: after compaction is complete,
+  // explicitly prompt the session to continue so the agent resumes its task.
+  try {
+    await context.client.session.prompt({
+      path: { id: sessionID },
+      body: {
+        model: { providerID: original.providerID, modelID: original.modelID },
+        parts: [{ type: "text" as const, text: "Continue from where you left off." }],
+      },
+    })
+    await logger.info("Switch-back: continuation sent, session resumed on original model", {
+      sessionID, model: `${original.providerID}/${original.modelID}`,
+    })
+  } catch (err) {
+    await logger.warn("Switch-back: continuation prompt failed", {
+      sessionID, error: err instanceof Error ? err.message : String(err),
+    })
+  }
 }
 
 export async function createPlugin(context: PluginInput): Promise<PluginHooks> {
@@ -1231,7 +1246,7 @@ export async function createPlugin(context: PluginInput): Promise<PluginHooks> {
 
         // Phase: "summarizing" — compaction done, complete switch-back
         if (phase === "summarizing" && lcf) {
-          await handleLargeContextCompletion(props.sessionID, logger)
+          await handleLargeContextCompletion(props.sessionID, context, logger)
           return
         }
       }
