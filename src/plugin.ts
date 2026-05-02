@@ -1096,7 +1096,7 @@ export async function createPlugin(context: PluginInput): Promise<PluginHooks> {
           if (originalLimit) {
             const targetTokens = Math.floor(originalLimit * 0.2);
             output.context.push(
-              `Use at most ${targetTokens} tokens for this summary. The session will resume on the original model (${original.providerID}/${original.modelID}) which has a ${originalLimit} token limit. Preserve: what the user requested, what the large model accomplished, key files changed, decisions made, and current task status.`,
+              `Use at most ${targetTokens} tokens for this summary. Preserve: user request, accomplishments, key files changed, decisions made, and current task status.`,
             );
           } else {
             output.context.push(
