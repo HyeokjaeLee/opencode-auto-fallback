@@ -32,6 +32,7 @@ import {
   TOAST_DURATION_LONG_MS,
   LARGE_CONTEXT_CONTINUATION,
   RETURN_CONTINUATION,
+  COMPACTION_FALLBACK_TOKEN_LIMIT,
 } from "./constants";
 import { createLogger } from "./log";
 import {
@@ -1093,25 +1094,20 @@ export async function createPlugin(context: PluginInput): Promise<PluginHooks> {
           const originalLimit = getModelContextLimit(
             `${original.providerID}/${original.modelID}`,
           );
-          if (originalLimit) {
-            const targetTokens = Math.floor(originalLimit * 0.2);
-            output.context.push(
-              `Reduce to at most ${targetTokens} tokens.`,
-            );
-          } else {
-            output.context.push(
-              `Reduce to at most 10000 tokens.`,
-            );
-          }
+
+          const targetTokens = originalLimit
+            ? Math.floor(originalLimit * 0.2)
+            : COMPACTION_FALLBACK_TOKEN_LIMIT;
+
+          output.context.push(`Reduce to at most ${targetTokens} tokens.`);
+
           await logger.info(
             "Compacting: summarizing — appended original model context",
             {
               sessionID: input.sessionID,
               originalModel: `${original.providerID}/${original.modelID}`,
               originalLimit,
-              targetTokens: originalLimit
-                ? Math.floor(originalLimit * 0.2)
-                : undefined,
+              targetTokens: targetTokens,
             },
           );
         }
@@ -1439,14 +1435,10 @@ export async function createPlugin(context: PluginInput): Promise<PluginHooks> {
               },
             })
             .catch(async (err) => {
-              await logger.warn(
-                "Self-compaction: continuation prompt failed",
-                {
-                  sessionID: props.sessionID,
-                  error:
-                    err instanceof Error ? err.message : String(err),
-                },
-              );
+              await logger.warn("Self-compaction: continuation prompt failed", {
+                sessionID: props.sessionID,
+                error: err instanceof Error ? err.message : String(err),
+              });
             });
           return;
         }
