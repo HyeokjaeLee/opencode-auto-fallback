@@ -1197,10 +1197,6 @@ export async function createPlugin(context: PluginInput): Promise<PluginHooks> {
           // Priority 2: Return condition NOT met — check if large model needs self-compaction
           const largeThreshold = await checkContextThreshold(props.sessionID, context, logger)
           if (largeThreshold.atThreshold) {
-
-          // Priority 2: Return condition NOT met — check if large model needs self-compaction
-          const largeThreshold = await checkContextThreshold(props.sessionID, context, logger)
-          if (largeThreshold.atThreshold) {
             await logger.info("Idle: large model context full, triggering manual compact", {
               sessionID: props.sessionID,
             })
