@@ -35,10 +35,6 @@ export function incrementBackoff(sessionID: string): number {
   return state.backoffLevel
 }
 
-export function getBackoffLevel(sessionID: string): number {
-  return sessions.get(sessionID)?.backoffLevel ?? 0
-}
-
 export function resetBackoff(sessionID: string): void {
   const state = sessions.get(sessionID)
   if (state) {

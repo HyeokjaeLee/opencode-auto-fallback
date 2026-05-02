@@ -5,7 +5,6 @@ export type {
   FallbackModel,
   FallbackModelConfig,
   FallbackEntry,
-  ModelReference,
   ResolvedModel,
   AgentFallbackMap,
   FallbackDecision,

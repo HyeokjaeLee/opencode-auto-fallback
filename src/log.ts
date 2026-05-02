@@ -40,7 +40,7 @@ async function trimLogFile(): Promise<void> {
     if (lines.length <= MAX_LINES) return
     const trimmed = lines.slice(-MAX_LINES).join("\n") + "\n"
     await writeFile(LOG_FILE, trimmed, "utf-8")
-  } catch {}
+  } catch { /* non-critical: log rotation best-effort */ }
 }
 
 function getEventType(extra?: Record<string, unknown>): string | undefined {
@@ -56,7 +56,7 @@ function getEventType(extra?: Record<string, unknown>): string | undefined {
   return undefined
 }
 
-export function shouldWriteLog(message: string, extra?: Record<string, unknown>): boolean {
+function shouldWriteLog(message: string, extra?: Record<string, unknown>): boolean {
   const normalizedMessage = message.trim().toLowerCase()
   if (normalizedMessage !== "event received") return true
 
@@ -64,7 +64,7 @@ export function shouldWriteLog(message: string, extra?: Record<string, unknown>)
   return eventType === undefined || !NOISY_EVENT_TYPES.has(eventType)
 }
 
-export async function log(
+async function log(
   level: Level,
   message: string,
   extra?: Record<string, unknown>

@@ -93,20 +93,6 @@ export interface MessageWithParts {
   parts: MessagePart[]
 }
 
-export type ForkStatus = "forking" | "running" | "completed" | "failed" | "injecting" | "done"
-
-export interface ForkTrackingEntry {
-  forkedSessionID: string
-  mainSessionID: string
-  status: ForkStatus
-  agent: string
-  largeModel: FallbackModel
-  originalModel: ResolvedModel
-  createdAt: number
-  /** The last user request text captured before compaction, used to provide context when injecting the fork result back into the main session. */
-  lastRequest?: string
-}
-
 export type LargeContextPhase = "pending" | "active" | "summarizing"
 
 export interface ToastOptions {

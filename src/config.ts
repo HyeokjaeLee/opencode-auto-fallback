@@ -140,7 +140,7 @@ function writeDefaultConfig(configDir: string): string | null {
     )
     writeFileSync(configPath, content + "\n", "utf-8")
     return configPath
-  } catch {
+  } catch { /* non-critical: best-effort default config write */
     return null
   }
 }
@@ -169,7 +169,7 @@ export function loadConfig(): FallbackConfig {
         minContextRatio: userConfig.largeContextFallback.minContextRatio ?? 0.1,
       } : undefined,
     };
-  } catch {
+  } catch { /* non-critical: malformed config, use defaults */
     return DEFAULT_CONFIG;
   }
 }

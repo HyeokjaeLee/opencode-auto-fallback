@@ -4,12 +4,10 @@ import { isTransientErrorMessage, isPermanentRateLimitMessage } from "../decisio
 import {
   activateCooldown,
   incrementBackoff,
-  getBackoffLevel,
   resetBackoff,
   resetIfExpired,
   removeSession,
 } from "../session-state"
-import { shouldWriteLog } from "../log"
 import { extractUserParts } from "../message"
 import type { FallbackConfig } from "../types"
 
@@ -150,26 +148,9 @@ describe("extractUserParts", () => {
   })
 })
 
-describe("shouldWriteLog", () => {
-  it("filters high-volume event received logs", () => {
-    expect(shouldWriteLog("event received", { type: "message.part.delta" })).toBe(false)
-    expect(shouldWriteLog("event received", { type: "session.idle" })).toBe(false)
-  })
-
-  it("keeps meaningful event received logs", () => {
-    expect(shouldWriteLog("event received", { type: "session.error" })).toBe(true)
-    expect(shouldWriteLog("event received", { type: "session.deleted" })).toBe(true)
-  })
-
-  it("keeps non-generic log messages", () => {
-    expect(shouldWriteLog("Retryable error", { type: "message.part.delta" })).toBe(true)
-  })
-})
-
 describe("session state - backoff", () => {
   const sid = "test-backoff"
   afterEach(() => removeSession(sid))
-  it("starts at 0", () => expect(getBackoffLevel(sid)).toBe(0))
   it("increments", () => {
     expect(incrementBackoff(sid)).toBe(1)
     expect(incrementBackoff(sid)).toBe(2)
@@ -177,13 +158,13 @@ describe("session state - backoff", () => {
   it("resets", () => {
     incrementBackoff(sid); incrementBackoff(sid)
     resetBackoff(sid)
-    expect(getBackoffLevel(sid)).toBe(0)
+    expect(incrementBackoff(sid)).toBe(1)
   })
   it("resetIfExpired clears backoff", () => {
     incrementBackoff(sid); incrementBackoff(sid)
     activateCooldown(sid, -1)
     resetIfExpired(sid)
-    expect(getBackoffLevel(sid)).toBe(0)
+    expect(incrementBackoff(sid)).toBe(1)
   })
 })
 

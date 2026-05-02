@@ -1,12 +1,13 @@
 import { describe, it, expect, vi, afterEach } from "vitest"
 import type { FallbackConfig } from "../types"
-import { _forTesting } from "../plugin"
-import { clearAllCooldowns, isModelInCooldown } from "../provider-state"
+import { handleRetry, handleImmediate, tryFallbackChain } from "../fallback"
+import { showToastSafely } from "../session-utils"
+import { shouldSkipLargeContextFallback } from "../large-context"
+import { revertAndPrompt } from "../fallback"
+import { isRegisteredAgent, setRegisteredAgents } from "../state/context-state"
+import { isModelInCooldown } from "../provider-state"
 import { removeSession } from "../session-state"
 import { createMockContext, createMockMessages } from "./mocks"
-
-const { handleRetry, handleImmediate, tryFallbackChain, showToastSafely, revertAndPrompt, shouldSkipLargeContextFallback } = _forTesting
-import { isRegisteredAgent, setRegisteredAgents, clearRegisteredAgents } from "../state/context-state"
 
 function makeConfig(overrides?: Partial<FallbackConfig>): FallbackConfig {
   return {
@@ -30,7 +31,6 @@ const SESSION = "test-session-1"
 
 afterEach(() => {
   removeSession(SESSION)
-  clearAllCooldowns()
   vi.clearAllMocks()
 })
 
@@ -60,7 +60,7 @@ describe("showToastSafely", () => {
 
 describe("isRegisteredAgent", () => {
   afterEach(() => {
-    clearRegisteredAgents()
+    setRegisteredAgents([])
   })
 
   it("matches agents that were registered via setRegisteredAgents", () => {

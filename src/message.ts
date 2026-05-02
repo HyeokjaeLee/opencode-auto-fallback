@@ -5,11 +5,11 @@ export type PromptPart =
   | { type: "file"; mime: string; filename?: string; url: string }
   | { type: "agent"; name: string }
 
-export function isSyntheticPart(part: MessagePart): boolean {
+function isSyntheticPart(part: MessagePart): boolean {
   return part.synthetic === true
 }
 
-export function convertToPromptPart(part: MessagePart): PromptPart | null {
+function convertToPromptPart(part: MessagePart): PromptPart | null {
   switch (part.type) {
     case "text":
       return part.text ? { type: "text", text: part.text } : null

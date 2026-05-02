@@ -1,7 +1,7 @@
 import type { Message as SDKMessage, Part as SDKPart } from "@opencode-ai/sdk"
 import type { MessageInfo, MessagePart, MessageWithParts } from "../types"
 
-export function toMessageInfo(msg: SDKMessage): MessageInfo {
+function toMessageInfo(msg: SDKMessage): MessageInfo {
   if (msg.role === "assistant") {
     return {
       id: msg.id,
@@ -19,7 +19,7 @@ export function toMessageInfo(msg: SDKMessage): MessageInfo {
   }
 }
 
-export function toMessagePart(part: SDKPart): MessagePart {
+function toMessagePart(part: SDKPart): MessagePart {
   const base: MessagePart = { id: part.id, type: part.type }
   switch (part.type) {
     case "text":

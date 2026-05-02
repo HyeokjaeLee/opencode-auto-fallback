@@ -40,7 +40,7 @@ export async function checkForUpdates(currentVersion: string): Promise<UpdateInf
       latest,
       hasUpdate: latest !== currentVersion,
     }
-  } catch {
+  } catch { /* non-critical: update check failure, report no update */
     return { current: currentVersion, latest: currentVersion, hasUpdate: false }
   }
 }
@@ -82,7 +82,7 @@ function readInstalledPackageVersion(workspaceDir: string): string | null {
   try {
     const content = JSON.parse(readFileSync(pkgJsonPath, "utf-8")) as { version?: unknown }
     return typeof content.version === "string" ? content.version : null
-  } catch {
+  } catch { /* non-critical: missing or unreadable package.json */
     return null
   }
 }

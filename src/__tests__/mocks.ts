@@ -8,7 +8,6 @@ export function createMockContext(overrides?: {
   prompt?: ReturnType<typeof vi.fn>
   revert?: ReturnType<typeof vi.fn>
   showToast?: ReturnType<typeof vi.fn>
-  fork?: ReturnType<typeof vi.fn>
   get?: ReturnType<typeof vi.fn>
   summarize?: ReturnType<typeof vi.fn>
 }) {
@@ -18,7 +17,6 @@ export function createMockContext(overrides?: {
   const mockPrompt = overrides?.prompt ?? vi.fn().mockResolvedValue(undefined)
   const mockRevert = overrides?.revert ?? vi.fn().mockResolvedValue({ response: { status: 200 }, data: { revert: {} } })
   const mockShowToast = overrides?.showToast ?? vi.fn().mockResolvedValue(true)
-  const mockFork = overrides?.fork ?? vi.fn().mockResolvedValue({ data: { id: "forked-session-id" } })
   const mockGet = overrides?.get ?? vi.fn().mockResolvedValue({ data: { id: "test-session", title: "test" } })
   const mockSummarize = overrides?.summarize ?? vi.fn().mockResolvedValue({ data: null })
 
@@ -27,7 +25,6 @@ export function createMockContext(overrides?: {
       session: {
         abort: mockAbort,
         children: mockChildren,
-        fork: mockFork,
         get: mockGet,
         messages: mockMessages,
         prompt: mockPrompt,

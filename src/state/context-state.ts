@@ -1,4 +1,4 @@
-import type { FallbackModel, ForkTrackingEntry, ForkStatus, LargeContextPhase, ResolvedModel } from "../types"
+import type { FallbackModel, LargeContextPhase, ResolvedModel } from "../types"
 import { normalizeAgentName } from "../config"
 
 const activeFallbackParams = new Map<string, FallbackModel>()
@@ -8,7 +8,6 @@ const sessionCooldownModel = new Map<string, { providerID: string; modelID: stri
 const largeContextPhase = new Map<string, LargeContextPhase>()
 const modelContextLimits = new Map<string, number>()
 const sessionOriginalAgent = new Map<string, string>()
-const forkTracking = new Map<string, ForkTrackingEntry>()
 const sessionRestoreModel = new Map<string, ResolvedModel>()
 const registeredAgentSet = new Set<string>()
 
@@ -113,39 +112,6 @@ export function getSessionOriginalAgent(sessionID: string): string | undefined {
   return sessionOriginalAgent.get(sessionID)
 }
 
-export function setForkTracking(entry: ForkTrackingEntry): void {
-  forkTracking.set(entry.forkedSessionID, entry)
-}
-
-export function getForkTracking(forkedSessionID: string): ForkTrackingEntry | undefined {
-  return forkTracking.get(forkedSessionID)
-}
-
-export function getForkByMainSession(mainSessionID: string): ForkTrackingEntry | undefined {
-  for (const entry of forkTracking.values()) {
-    if (entry.mainSessionID === mainSessionID) return entry
-  }
-  return undefined
-}
-
-export function updateForkStatus(forkedSessionID: string, status: ForkStatus): void {
-  const entry = forkTracking.get(forkedSessionID)
-  if (entry) entry.status = status
-}
-
-export function deleteForkTracking(forkedSessionID: string): void {
-  forkTracking.delete(forkedSessionID)
-}
-
-export function hasActiveFork(mainSessionID: string): boolean {
-  for (const entry of forkTracking.values()) {
-    if (entry.mainSessionID === mainSessionID && (entry.status === "forking" || entry.status === "running")) {
-      return true
-    }
-  }
-  return false
-}
-
 export function setRestoreModel(sessionID: string, providerID: string, modelID: string): void {
   sessionRestoreModel.set(sessionID, { providerID, modelID })
 }
@@ -166,14 +132,7 @@ export function cleanupSession(sessionID: string): void {
   activeFallbackParams.delete(sessionID)
   sessionOriginalAgent.delete(sessionID)
   sessionRestoreModel.delete(sessionID)
-  largeModelIdleCount.delete(sessionID)
   compactionTarget.delete(sessionID)
-  // Clean up fork tracking: remove entries keyed by forked session ID,
-  // or remove all fork entries whose main session matches
-  forkTracking.delete(sessionID)
-  for (const [forkedID, entry] of forkTracking) {
-    if (entry.mainSessionID === sessionID) forkTracking.delete(forkedID)
-  }
 }
 
 export function setRegisteredAgents(agents: string[]): void {
@@ -185,10 +144,6 @@ export function setRegisteredAgents(agents: string[]): void {
 
 export function isRegisteredAgent(agent: string): boolean {
   return registeredAgentSet.has(normalizeAgentName(agent))
-}
-
-export function clearRegisteredAgents(): void {
-  registeredAgentSet.clear()
 }
 
 let compactionReserved: number | undefined = undefined
@@ -218,24 +173,6 @@ export function getAndClearCompactionTarget(sessionID: string): "large" | "defau
 
 export function clearCompactionTarget(sessionID: string): void {
   compactionTarget.delete(sessionID)
-}
-
-// Track large model idle turns to prevent premature return
-const largeModelIdleCount = new Map<string, number>()
-
-export function incrementLargeModelIdle(sessionID: string): number {
-  const current = largeModelIdleCount.get(sessionID) ?? 0
-  const next = current + 1
-  largeModelIdleCount.set(sessionID, next)
-  return next
-}
-
-export function clearLargeModelIdle(sessionID: string): void {
-  largeModelIdleCount.delete(sessionID)
-}
-
-export function getLargeModelIdleCount(sessionID: string): number {
-  return largeModelIdleCount.get(sessionID) ?? 0
 }
 
 
