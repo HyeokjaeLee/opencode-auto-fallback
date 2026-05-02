@@ -92,7 +92,8 @@ function readInstalledPackageVersion(workspaceDir: string): string | null {
  */
 function syncPackageJson(workspaceDir: string): void {
   const pkgJsonPath = join(workspaceDir, "package.json")
-  const content = JSON.parse(readFileSync(pkgJsonPath, "utf-8")) as { dependencies: Record<string, string> }
+  const content = JSON.parse(readFileSync(pkgJsonPath, "utf-8")) as { dependencies?: Record<string, string> }
+  if (!content.dependencies) content.dependencies = {}
   content.dependencies[PACKAGE_NAME] = "latest"
   writeFileSync(pkgJsonPath, JSON.stringify(content, null, 2) + "\n", "utf-8")
 }
