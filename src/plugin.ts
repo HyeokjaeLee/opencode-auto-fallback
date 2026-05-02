@@ -1093,17 +1093,25 @@ export async function createPlugin(context: PluginInput): Promise<PluginHooks> {
           const originalLimit = getModelContextLimit(
             `${original.providerID}/${original.modelID}`,
           );
-          output.context.push(
-            originalLimit
-              ? `The compacted summary below must fit within ${originalLimit} tokens total because the session will resume on the original model (${original.providerID}/${original.modelID}). Keep the summary concise while preserving: what the user requested, what the large model accomplished, key files changed, decisions made, and current task status.`
-              : `The session will resume on the original model (${original.providerID}/${original.modelID}) after compaction. Preserve: user request, large model accomplishments, key files, decisions, and current status. Keep the summary concise.`,
-          );
+          if (originalLimit) {
+            const targetTokens = Math.floor(originalLimit * 0.2);
+            output.context.push(
+              `Use at most ${targetTokens} tokens for this summary. The session will resume on the original model (${original.providerID}/${original.modelID}) which has a ${originalLimit} token limit. Preserve: what the user requested, what the large model accomplished, key files changed, decisions made, and current task status.`,
+            );
+          } else {
+            output.context.push(
+              `The session will resume on the original model (${original.providerID}/${original.modelID}) after compaction. Preserve: user request, large model accomplishments, key files, decisions, and current status. Keep the summary concise.`,
+            );
+          }
           await logger.info(
             "Compacting: summarizing — appended original model context",
             {
               sessionID: input.sessionID,
               originalModel: `${original.providerID}/${original.modelID}`,
               originalLimit,
+              targetTokens: originalLimit
+                ? Math.floor(originalLimit * 0.2)
+                : undefined,
             },
           );
         }
