@@ -124,10 +124,13 @@ async function hasActiveChildren(
       string,
       { type: string }
     >;
-    // Only consider children that are explicitly busy or retry (not idle and not missing)
+    // Treat children as active if they have no status (just dispatched, hasn't
+    // reported first event yet) or are explicitly busy/retry.
+    // This prevents premature return when a subagent was just created but
+    // hasn't sent its first status event.
     for (const c of children) {
       const s = allStatuses[c.id];
-      if (s?.type === "busy" || s?.type === "retry") return true;
+      if (!s || s.type === "busy" || s.type === "retry") return true;
     }
     return false;
   } catch {
