@@ -655,6 +655,27 @@ export async function createPlugin(context: PluginInput): Promise<PluginHooks> {
             model: `${input.model.providerID}/${input.model.id}`,
             previousModel: prev ? `${prev.providerID}/${prev.modelID}` : "none",
           })
+
+          // If the model changed away from the large context model externally,
+          // reset the stale "active" phase to prevent state mismatch.
+          const lcf = config.largeContextFallback
+          if (lcf && prev) {
+            const lcfParsed = parseModel(lcf.model)
+            const phase = getLargeContextPhase(input.sessionID)
+            if ((phase === "active" || phase === "pending") &&
+                prev.providerID === lcfParsed.providerID && prev.modelID === lcfParsed.modelID &&
+                (input.model.providerID !== lcfParsed.providerID || input.model.id !== lcfParsed.modelID)) {
+              deleteLargeContextPhase(input.sessionID)
+              deleteRestoreModel(input.sessionID)
+              clearLargeModelIdle(input.sessionID)
+              await logger.info("Model changed from large model, phase reset", {
+                sessionID: input.sessionID,
+                fromModel: `${prev.providerID}/${prev.modelID}`,
+                toModel: `${input.model.providerID}/${input.model.id}`,
+                previousPhase: phase,
+              })
+            }
+          }
         }
 
         getOrSetOriginalModel(input.sessionID, input.model.providerID, input.model.id)
