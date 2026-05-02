@@ -1405,14 +1405,38 @@ export async function createPlugin(context: PluginInput): Promise<PluginHooks> {
           return;
         }
 
-        // Large model self-compaction: phase stays "active", next idle checks threshold again
+        // Large model self-compaction: send continuation to keep working on large model.
+        // Without this, the next idle handler immediately checks return condition and
+        // triggers a redundant return compaction — causing double compaction.
         if (phase === "active") {
           await logger.info(
-            "Compacted: large model compaction complete, continuing",
+            "Compacted: large model compaction complete, continuing on large model",
             {
               sessionID: props.sessionID,
             },
           );
+          context.client.session
+            .prompt({
+              path: { id: props.sessionID },
+              body: {
+                parts: [
+                  {
+                    type: "text" as const,
+                    text: "Continue from where you left off.",
+                  },
+                ],
+              },
+            })
+            .catch(async (err) => {
+              await logger.warn(
+                "Self-compaction: continuation prompt failed",
+                {
+                  sessionID: props.sessionID,
+                  error:
+                    err instanceof Error ? err.message : String(err),
+                },
+              );
+            });
           return;
         }
       }
