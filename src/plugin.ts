@@ -1150,6 +1150,9 @@ export async function createPlugin(context: PluginInput): Promise<PluginHooks> {
         // Phase: "active" — on large model, check return condition or self-compaction
         if (phase === "active") {
           if (!lcf) {
+            await logger.info("Idle: active — lcf not configured, clearing phase", {
+              sessionID: props.sessionID,
+            })
             deleteLargeContextPhase(props.sessionID)
             clearLargeModelIdle(props.sessionID)
             return
@@ -1185,7 +1188,15 @@ export async function createPlugin(context: PluginInput): Promise<PluginHooks> {
             await logger.info("Idle: return waiting —pending tool calls in last response", {
               sessionID: props.sessionID,
             })
+          } else {
+            await logger.info("Idle: return blocked — active children present", {
+              sessionID: props.sessionID, hasChildren,
+            })
           }
+
+          // Priority 2: Return condition NOT met — check if large model needs self-compaction
+          const largeThreshold = await checkContextThreshold(props.sessionID, context, logger)
+          if (largeThreshold.atThreshold) {
 
           // Priority 2: Return condition NOT met — check if large model needs self-compaction
           const largeThreshold = await checkContextThreshold(props.sessionID, context, logger)
