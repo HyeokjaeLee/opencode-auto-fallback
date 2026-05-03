@@ -1,6 +1,6 @@
-import type { Logger } from "@/utils/session-utils";
-import { removeSession } from "@/state/session-state";
 import { cleanupSession } from "@/state/context-state";
+import { removeSession } from "@/state/session-state";
+import type { Logger } from "@/utils/session-utils";
 
 export async function handleSessionDeleted(
   logger: Logger,

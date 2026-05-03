@@ -1,7 +1,11 @@
-import type { PluginInput } from "@opencode-ai/plugin";
-import type { FallbackConfig } from "@/config/types";
 import { getParsedLcfModel } from "@/config/config";
-import { isModelInCooldown } from "@/state/provider-state";
+import type { FallbackConfig } from "@/config/types";
+import {
+  handleLargeContextSwitch,
+  handleLargeContextReturn,
+  handleLargeContextCompletion,
+  shouldSkipLargeContextFallback,
+} from "@/core/large-context";
 import {
   getCurrentModel,
   getLargeContextPhase,
@@ -13,16 +17,13 @@ import {
   getModelContextLimit,
   setSessionOriginalAgent,
 } from "@/state/context-state";
-import type { Logger } from "@/utils/session-utils";
-import { formatModelKey, isSameModel } from "@/utils/model";
-import { fetchSessionData } from "@/utils/session-utils";
-import {
-  handleLargeContextSwitch,
-  handleLargeContextReturn,
-  handleLargeContextCompletion,
-  shouldSkipLargeContextFallback,
-} from "@/core/large-context";
+import { isModelInCooldown } from "@/state/provider-state";
 import { checkContextThreshold } from "@/utils/context";
+import { formatModelKey, isSameModel } from "@/utils/model";
+import type { Logger } from "@/utils/session-utils";
+import { fetchSessionData } from "@/utils/session-utils";
+
+import type { PluginInput } from "@opencode-ai/plugin";
 
 export async function handleSessionIdle(
   config: FallbackConfig,

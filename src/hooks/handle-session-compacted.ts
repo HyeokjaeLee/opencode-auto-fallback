@@ -1,9 +1,10 @@
-import type { PluginInput } from "@opencode-ai/plugin";
-import type { FallbackConfig } from "@/config/types";
 import { LARGE_CONTEXT_CONTINUATION } from "@/config/constants";
+import type { FallbackConfig } from "@/config/types";
 import { getLargeContextPhase } from "@/state/context-state";
-import type { Logger } from "@/utils/session-utils";
 import { serializeError } from "@/utils/error";
+import type { Logger } from "@/utils/session-utils";
+
+import type { PluginInput } from "@opencode-ai/plugin";
 
 export async function handleSessionCompacted(
   _config: FallbackConfig,

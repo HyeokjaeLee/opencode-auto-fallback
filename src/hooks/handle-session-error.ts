@@ -1,8 +1,8 @@
-import type { PluginInput } from "@opencode-ai/plugin";
-import type { FallbackConfig } from "@/config/types";
 import { getParsedLcfModel } from "@/config/config";
+import type { FallbackConfig } from "@/config/types";
 import { classifyError, isContextOverflowError } from "@/core/decision";
-import { isCooldownActive } from "@/state/session-state";
+import { handleRetry, handleImmediate } from "@/core/fallback";
+import { handleLargeContextSwitch } from "@/core/large-context";
 import {
   getCurrentModel,
   getLargeContextPhase,
@@ -12,11 +12,12 @@ import {
   isRegisteredAgent,
   getSessionCooldownModel,
 } from "@/state/context-state";
-import type { Logger } from "@/utils/session-utils";
+import { isCooldownActive } from "@/state/session-state";
 import { isSameModel } from "@/utils/model";
+import type { Logger } from "@/utils/session-utils";
 import { abortSessionSafely } from "@/utils/session-utils";
-import { handleRetry, handleImmediate } from "@/core/fallback";
-import { handleLargeContextSwitch } from "@/core/large-context";
+
+import type { PluginInput } from "@opencode-ai/plugin";
 
 export async function handleSessionError(
   config: FallbackConfig,
