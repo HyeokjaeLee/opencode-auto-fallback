@@ -1,6 +1,6 @@
 {
   "name": "opencode-auto-fallback",
-  "version": "0.4.1",
+  "version": "0.4.2",
   "description": "Advanced fallback plugin for OpenCode agents — model switching, retry with backoff, and context overflow handling",
   "type": "module",
   "main": "src/index.ts",
