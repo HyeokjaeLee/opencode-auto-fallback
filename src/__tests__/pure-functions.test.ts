@@ -1,16 +1,16 @@
-import { describe, it, expect, afterEach } from "vitest";
-import { parseModel, getFallbackChain, normalizeAgentName } from "@/config/config";
-import { isTransientErrorMessage, isPermanentRateLimitMessage } from "@/core/decision";
+import { getFallbackChain, normalizeAgentName, parseModel } from "@/config/config";
+import type { FallbackConfig } from "@/config/types";
+import { isPermanentRateLimitMessage, isTransientErrorMessage } from "@/core/decision";
 import { shouldSkipLargeContextFallback } from "@/core/large-context";
+import { extractUserParts } from "@/core/message";
 import {
   activateCooldown,
   incrementBackoff,
+  removeSession,
   resetBackoff,
   resetIfExpired,
-  removeSession,
 } from "@/state/session-state";
-import { extractUserParts } from "@/core/message";
-import type { FallbackConfig } from "@/config/types";
+import { afterEach, describe, expect, it } from "vitest";
 
 describe("parseModel", () => {
   it("parses 'provider/model'", () => {

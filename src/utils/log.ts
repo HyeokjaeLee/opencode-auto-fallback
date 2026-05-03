@@ -1,6 +1,6 @@
 import { appendFile, mkdir, readFile, writeFile } from "node:fs/promises";
-import { join } from "node:path";
 import { homedir } from "node:os";
+import { join } from "node:path";
 
 const LOG_DIR = join(
   process.env.XDG_DATA_HOME ?? join(homedir(), ".local", "share"),

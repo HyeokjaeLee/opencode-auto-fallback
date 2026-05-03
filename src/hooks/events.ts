@@ -1,40 +1,41 @@
-import type { PluginInput } from "@opencode-ai/plugin";
-import type { FallbackConfig } from "@/config/types";
-import { LARGE_CONTEXT_CONTINUATION } from "@/config/constants";
 import { getParsedLcfModel } from "@/config/config";
+import { LARGE_CONTEXT_CONTINUATION } from "@/config/constants";
+import type { FallbackConfig } from "@/config/types";
 import {
   classifyError,
-  isTransientErrorMessage,
-  isPermanentRateLimitMessage,
   isContextOverflowError,
+  isPermanentRateLimitMessage,
+  isTransientErrorMessage,
 } from "@/core/decision";
-import { isCooldownActive, resetIfExpired, removeSession } from "@/state/session-state";
-import { isModelInCooldown, cleanupExpired } from "@/state/provider-state";
+import { handleImmediate, handleRetry } from "@/core/fallback";
 import {
-  getCurrentModel,
-  getLargeContextPhase,
-  deleteLargeContextPhase,
-  setCompactionTarget,
-  clearCompactionTarget,
-  getSessionOriginalAgent,
-  isRegisteredAgent,
-  getModelContextLimit,
-  cleanupSession,
-  setSessionOriginalAgent,
-  getSessionCooldownModel,
-} from "@/state/context-state";
-import type { Logger } from "@/utils/session-utils";
-import { formatModelKey, isSameModel } from "@/utils/model";
-import { serializeError } from "@/utils/error";
-import { abortSession, abortSessionSafely, fetchSessionData } from "@/utils/session-utils";
-import { handleRetry, handleImmediate } from "@/core/fallback";
-import {
-  handleLargeContextSwitch,
-  handleLargeContextReturn,
   handleLargeContextCompletion,
+  handleLargeContextReturn,
+  handleLargeContextSwitch,
   shouldSkipLargeContextFallback,
 } from "@/core/large-context";
+import {
+  cleanupSession,
+  clearCompactionTarget,
+  deleteLargeContextPhase,
+  getCurrentModel,
+  getLargeContextPhase,
+  getModelContextLimit,
+  getSessionCooldownModel,
+  getSessionOriginalAgent,
+  isRegisteredAgent,
+  setCompactionTarget,
+  setSessionOriginalAgent,
+} from "@/state/context-state";
+import { cleanupExpired, isModelInCooldown } from "@/state/provider-state";
+import { isCooldownActive, removeSession, resetIfExpired } from "@/state/session-state";
 import { checkContextThreshold } from "@/utils/context";
+import { serializeError } from "@/utils/error";
+import { formatModelKey, isSameModel } from "@/utils/model";
+import type { Logger } from "@/utils/session-utils";
+import { abortSession, abortSessionSafely, fetchSessionData } from "@/utils/session-utils";
+
+import type { PluginInput } from "@opencode-ai/plugin";
 
 export function createEventHandler(config: FallbackConfig, logger: Logger, context: PluginInput) {
   return async ({ event }: { event: { type: string; properties: unknown } }) => {

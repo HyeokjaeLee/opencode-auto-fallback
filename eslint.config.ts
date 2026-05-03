@@ -1,7 +1,8 @@
 import eslint from "@eslint/js";
-import tseslint from "typescript-eslint";
-import eslintConfigPrettier from "eslint-config-prettier/flat";
 import vitest from "@vitest/eslint-plugin";
+import eslintConfigPrettier from "eslint-config-prettier/flat";
+import importX from "eslint-plugin-import-x";
+import tseslint from "typescript-eslint";
 
 export default tseslint.config(
   eslint.configs.recommended,
@@ -22,6 +23,15 @@ export default tseslint.config(
   {
     files: ["index.ts", "src/**/*.ts"],
     ignores: ["src/__tests__/**"],
+    plugins: { "import-x": importX },
+    settings: {
+      "import-x/resolver": {
+        typescript: {
+          project: "./tsconfig.json",
+        },
+        node: true,
+      },
+    },
     rules: {
       // === TypeScript Strict ===
       "@typescript-eslint/no-explicit-any": "error",
@@ -102,6 +112,34 @@ export default tseslint.config(
       "no-useless-return": "error",
       radix: "error",
       "@typescript-eslint/no-shadow": "error",
+
+      // === Import Ordering & Path Restrictions ===
+      "import-x/order": [
+        "error",
+        {
+          groups: [
+            "builtin", // node:fs, node:path
+            "external", // npm packages
+            "internal", // @/* alias
+            "parent", // ../
+            "sibling", // ./
+            "index", // ./index
+            "type",
+          ],
+          "newlines-between": "always",
+          alphabetize: { order: "asc", caseInsensitive: true },
+          pathGroups: [
+            { pattern: "@/**", group: "internal" },
+            { pattern: "~/**", group: "internal" },
+          ],
+          pathGroupsExcludedImportTypes: ["builtin"],
+        },
+      ],
+      "import-x/newline-after-import": ["error", { count: 1 }],
+      "import-x/no-duplicates": "error",
+      // ../ 상대경로 전부 차단 → @/ 또는 ~/ alias 사용
+      // false positive: resolves @/ then flags the relative path as "parent"
+      "import-x/no-relative-parent-imports": "off",
     },
   },
 
@@ -121,6 +159,7 @@ export default tseslint.config(
       "@typescript-eslint/no-floating-promises": "off",
       "@typescript-eslint/no-non-null-assertion": "off",
       "@typescript-eslint/unbound-method": "off",
+      "import-x/order": "off",
     },
   },
 

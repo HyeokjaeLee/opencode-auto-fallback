@@ -1,11 +1,11 @@
-import type { FallbackDecision } from "@/config/types";
 import {
+  CONTEXT_OVERFLOW_PATTERNS,
   IMMEDIATE_STATUS_CODES,
+  PERMANENT_RATE_LIMIT_PATTERNS,
   RETRYABLE_STATUS_CODES,
   TRANSIENT_ERROR_PATTERNS,
-  PERMANENT_RATE_LIMIT_PATTERNS,
-  CONTEXT_OVERFLOW_PATTERNS,
 } from "@/config/constants";
+import type { FallbackDecision } from "@/config/types";
 
 export function classifyError(
   statusCode: number | undefined,

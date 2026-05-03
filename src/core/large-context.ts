@@ -1,26 +1,27 @@
-import type { PluginInput } from "@opencode-ai/plugin";
-import type { FallbackConfig } from "@/config/types";
-import { LARGE_CONTEXT_CONTINUATION, RETURN_CONTINUATION } from "@/config/constants";
 import { parseModel } from "@/config/config";
-import { isModelInCooldown } from "@/state/provider-state";
-import { formatModelKey } from "@/utils/model";
-import { serializeError } from "@/utils/error";
+import { LARGE_CONTEXT_CONTINUATION, RETURN_CONTINUATION } from "@/config/constants";
+import type { FallbackConfig } from "@/config/types";
 import {
-  setActiveFallbackParams,
   clearActiveFallbackParams,
-  getCurrentModel,
-  getOriginalModel,
-  setLargeContextPhase,
-  getLargeContextPhase,
   deleteLargeContextPhase,
-  setRestoreModel,
   deleteRestoreModel,
+  getCurrentModel,
+  getLargeContextPhase,
+  getOriginalModel,
   getRecoveryModel,
   getSessionOriginalAgent,
   isRegisteredAgent,
+  setActiveFallbackParams,
+  setLargeContextPhase,
+  setRestoreModel,
 } from "@/state/context-state";
+import { isModelInCooldown } from "@/state/provider-state";
+import { serializeError } from "@/utils/error";
+import { formatModelKey } from "@/utils/model";
 import type { Logger } from "@/utils/session-utils";
 import { fetchSessionData } from "@/utils/session-utils";
+
+import type { PluginInput } from "@opencode-ai/plugin";
 
 export function shouldSkipLargeContextFallback(
   currentWindow: number,

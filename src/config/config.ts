@@ -1,15 +1,16 @@
-import { existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+
 import type {
+  AgentFallbackMap,
   FallbackConfig,
   FallbackEntry,
   FallbackModel,
   FallbackModelConfig,
+  LargeContextFallbackConfig,
   ModelReference,
   ResolvedModel,
-  AgentFallbackMap,
-  LargeContextFallbackConfig,
 } from "./types";
 
 interface RawConfig {

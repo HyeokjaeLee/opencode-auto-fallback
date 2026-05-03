@@ -1,20 +1,20 @@
-import type { PluginInput } from "@opencode-ai/plugin";
-import type { FallbackConfig, FallbackModel } from "@/config/types";
-import { BACKOFF_BASE_MS, REVERT_DELAY_MS, TOAST_DURATION_MS } from "@/config/constants";
 import { getFallbackChain } from "@/config/config";
-import { isModelInCooldown } from "@/state/provider-state";
+import { BACKOFF_BASE_MS, REVERT_DELAY_MS, TOAST_DURATION_MS } from "@/config/constants";
+import type { FallbackConfig, FallbackModel } from "@/config/types";
 import {
+  deleteLargeContextPhase,
   setActiveFallbackParams,
   setSessionCooldownModel,
-  deleteLargeContextPhase,
 } from "@/state/context-state";
-import { markModelCooldown } from "@/state/provider-state";
-import { incrementBackoff, resetBackoff, activateCooldown } from "@/state/session-state";
-import type { Logger, ChatMessageInput } from "@/utils/session-utils";
-import { showToastSafely, abortSession, fetchSessionData } from "@/utils/session-utils";
-import type { PromptPart } from "./message";
-import { formatModelKey } from "@/utils/model";
+import { isModelInCooldown, markModelCooldown } from "@/state/provider-state";
+import { activateCooldown, incrementBackoff, resetBackoff } from "@/state/session-state";
 import { serializeError } from "@/utils/error";
+import { formatModelKey } from "@/utils/model";
+import type { ChatMessageInput, Logger } from "@/utils/session-utils";
+import { abortSession, fetchSessionData, showToastSafely } from "@/utils/session-utils";
+
+import type { PromptPart } from "./message";
+import type { PluginInput } from "@opencode-ai/plugin";
 
 export async function revertAndPrompt(
   sessionID: string,

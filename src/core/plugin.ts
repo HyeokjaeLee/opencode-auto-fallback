@@ -1,3 +1,41 @@
+import { getParsedLcfModel, loadConfig, normalizeAgentName } from "@/config/config";
+import {
+  COMPACTION_FALLBACK_TOKEN_LIMIT,
+  TOAST_DURATION_LONG_MS,
+  TOAST_DURATION_MS,
+} from "@/config/constants";
+import type { FallbackConfig } from "@/config/types";
+import { createEventHandler } from "@/hooks/events";
+import {
+  deleteSessionCooldownModel,
+  getAndClearCompactionTarget,
+  getAndClearFallbackParams,
+  getCurrentModel,
+  getLargeContextPhase,
+  getModelContextLimit,
+  getOrSetOriginalModel,
+  getRecoveryModel,
+  getSessionOriginalAgent,
+  hasModelChanged,
+  isRegisteredAgent,
+  setCompactionReserved,
+  setCurrentModel,
+  setLargeContextPhase,
+  setModelContextLimit,
+  setModelLimit,
+  setRegisteredAgents,
+  setSessionOriginalAgent,
+} from "@/state/context-state";
+import { deactivateCooldown } from "@/state/session-state";
+import { checkContextThreshold } from "@/utils/context";
+import { serializeError } from "@/utils/error";
+import { createLogger } from "@/utils/log";
+import { formatModelKey, isSameModel } from "@/utils/model";
+import type { Logger } from "@/utils/session-utils";
+import { abortSessionSafely, showToastSafely } from "@/utils/session-utils";
+import { checkForUpdates, tryInstallUpdate } from "@/utils/update-checker";
+import { version as currentVersion } from "~/package.json";
+
 import type { Hooks, PluginInput } from "@opencode-ai/plugin";
 
 type PluginHooks = Hooks & {
@@ -54,45 +92,6 @@ interface CompactingInput {
 interface CompactingOutput {
   context: string[];
 }
-
-import type { FallbackConfig } from "@/config/types";
-import {
-  TOAST_DURATION_MS,
-  TOAST_DURATION_LONG_MS,
-  COMPACTION_FALLBACK_TOKEN_LIMIT,
-} from "@/config/constants";
-import { normalizeAgentName, getParsedLcfModel } from "@/config/config";
-import { loadConfig } from "@/config/config";
-import { createLogger } from "@/utils/log";
-import { deactivateCooldown } from "@/state/session-state";
-import {
-  getAndClearFallbackParams,
-  setCurrentModel,
-  hasModelChanged,
-  getOrSetOriginalModel,
-  getLargeContextPhase,
-  setModelContextLimit,
-  setModelLimit,
-  getModelContextLimit,
-  setSessionOriginalAgent,
-  getSessionOriginalAgent,
-  isRegisteredAgent,
-  setRegisteredAgents,
-  setCompactionReserved,
-  deleteSessionCooldownModel,
-  getAndClearCompactionTarget,
-  getRecoveryModel,
-  getCurrentModel,
-  setLargeContextPhase,
-} from "@/state/context-state";
-import { checkForUpdates, tryInstallUpdate } from "@/utils/update-checker";
-import { version as currentVersion } from "../../package.json";
-import type { Logger } from "@/utils/session-utils";
-import { showToastSafely, abortSessionSafely } from "@/utils/session-utils";
-import { formatModelKey, isSameModel } from "@/utils/model";
-import { serializeError } from "@/utils/error";
-import { checkContextThreshold } from "@/utils/context";
-import { createEventHandler } from "@/hooks/events";
 
 export async function createPlugin(context: PluginInput): Promise<PluginHooks> {
   const config = loadConfig();

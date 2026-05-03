@@ -12,8 +12,9 @@
     "types": ["node"],
     "baseUrl": ".",
     "paths": {
-      "@/*": ["src/*"]
+      "@/*": ["src/*"],
+      "~/*": ["./*"]
     }
   },
-  "include": ["src/**/*.ts", "eslint.config.ts"]
+  "include": ["src/**/*.ts", "eslint.config.ts", "vitest.config.ts"]
 }

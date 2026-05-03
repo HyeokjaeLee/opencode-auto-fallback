@@ -1,14 +1,16 @@
-import type { PluginInput } from "@opencode-ai/plugin";
 import {
+  getCompactionReserved,
   getCurrentModel,
   getModelContextLimit,
   getModelInputLimit,
   getModelOutputLimit,
-  getCompactionReserved,
 } from "@/state/context-state";
-import { formatModelKey } from "./model";
+
 import { serializeError } from "./error";
+import { formatModelKey } from "./model";
+
 import type { Logger } from "./session-utils";
+import type { PluginInput } from "@opencode-ai/plugin";
 
 export interface ContextThresholdResult {
   atThreshold: boolean;

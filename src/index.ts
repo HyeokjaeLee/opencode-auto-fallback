@@ -1,16 +1,17 @@
 export { createPlugin as AutoFallbackPlugin } from "@/core/plugin";
 
 export type {
+  AgentFallbackMap,
+  ErrorClass,
   FallbackConfig,
+  FallbackDecision,
+  FallbackEntry,
   FallbackModel,
   FallbackModelConfig,
-  FallbackEntry,
-  ResolvedModel,
-  AgentFallbackMap,
-  FallbackDecision,
-  ErrorClass,
   LargeContextFallbackConfig,
+  ResolvedModel,
 } from "@/config/types";
 
 import { createPlugin } from "@/core/plugin";
+
 export default createPlugin;

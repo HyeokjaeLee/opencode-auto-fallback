@@ -1,4 +1,4 @@
-import type { MessagePart, MessageWithParts, MessageInfo } from "@/config/types";
+import type { MessageInfo, MessagePart, MessageWithParts } from "@/config/types";
 
 export type PromptPart =
   | { type: "text"; text: string }

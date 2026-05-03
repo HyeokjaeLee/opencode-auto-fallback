@@ -1,5 +1,5 @@
-import { describe, it, expect } from "vitest";
 import { classifyError } from "@/core/decision";
+import { describe, expect, it } from "vitest";
 
 describe("classifyError (structured)", () => {
   describe("cooldown active → ignore", () => {
