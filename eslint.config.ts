@@ -146,7 +146,7 @@ export default tseslint.config(
   // Test files — relaxed rules
   {
     files: ["src/__tests__/**"],
-    plugins: { vitest },
+    plugins: { vitest, "import-x": importX },
     rules: {
       ...vitest.configs.recommended.rules,
       "@typescript-eslint/no-explicit-any": "off",
@@ -159,7 +159,19 @@ export default tseslint.config(
       "@typescript-eslint/no-floating-promises": "off",
       "@typescript-eslint/no-non-null-assertion": "off",
       "@typescript-eslint/unbound-method": "off",
-      "import-x/order": "off",
+      "import-x/order": [
+        "error",
+        {
+          groups: ["builtin", "external", "internal", "parent", "sibling", "index", "type"],
+          "newlines-between": "always",
+          alphabetize: { order: "asc", caseInsensitive: true },
+          pathGroups: [
+            { pattern: "@/**", group: "internal" },
+            { pattern: "~/**", group: "internal" },
+          ],
+          pathGroupsExcludedImportTypes: ["builtin"],
+        },
+      ],
     },
   },
 

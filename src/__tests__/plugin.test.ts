@@ -1,3 +1,5 @@
+import { afterEach, describe, expect, it, vi } from "vitest";
+
 import type { FallbackConfig } from "@/config/types";
 import { handleImmediate, handleRetry, revertAndPrompt, tryFallbackChain } from "@/core/fallback";
 import { shouldSkipLargeContextFallback } from "@/core/large-context";
@@ -5,7 +7,7 @@ import { isRegisteredAgent, setRegisteredAgents } from "@/state/context-state";
 import { isModelInCooldown } from "@/state/provider-state";
 import { removeSession } from "@/state/session-state";
 import { showToastSafely } from "@/utils/session-utils";
-import { afterEach, describe, expect, it, vi } from "vitest";
+
 import { createMockContext, createMockMessages } from "./mocks";
 
 function makeConfig(overrides?: Partial<FallbackConfig>): FallbackConfig {

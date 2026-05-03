@@ -1,5 +1,6 @@
-import type { PluginInput } from "@opencode-ai/plugin";
 import { vi } from "vitest";
+
+import type { PluginInput } from "@opencode-ai/plugin";
 
 export function createMockContext(overrides?: {
   abort?: ReturnType<typeof vi.fn>;

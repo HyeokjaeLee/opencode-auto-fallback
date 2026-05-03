@@ -1,3 +1,5 @@
+import { afterEach, describe, expect, it } from "vitest";
+
 import {
   cleanupExpired,
   clearAllCooldowns,
@@ -5,7 +7,6 @@ import {
   isModelInCooldown,
   markModelCooldown,
 } from "@/state/provider-state";
-import { afterEach, describe, expect, it } from "vitest";
 
 describe("provider-state timed cooldown", () => {
   afterEach(() => clearAllCooldowns());

@@ -1,3 +1,5 @@
+import { afterEach, describe, expect, it } from "vitest";
+
 import { getFallbackChain, normalizeAgentName, parseModel } from "@/config/config";
 import type { FallbackConfig } from "@/config/types";
 import { isPermanentRateLimitMessage, isTransientErrorMessage } from "@/core/decision";
@@ -10,7 +12,6 @@ import {
   resetBackoff,
   resetIfExpired,
 } from "@/state/session-state";
-import { afterEach, describe, expect, it } from "vitest";
 
 describe("parseModel", () => {
   it("parses 'provider/model'", () => {
