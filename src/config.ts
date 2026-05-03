@@ -38,11 +38,10 @@ const SCHEMA_URL =
 
 function getConfigDir(): string {
   if (process.platform === "win32") {
-    const appData =
-      process.env.APPDATA || join(homedir(), "AppData", "Roaming");
+    const appData = process.env.APPDATA ?? join(homedir(), "AppData", "Roaming");
     return join(appData, "opencode");
   }
-  const xdgConfig = process.env.XDG_CONFIG_HOME || join(homedir(), ".config");
+  const xdgConfig = process.env.XDG_CONFIG_HOME ?? join(homedir(), ".config");
   return join(xdgConfig, "opencode");
 }
 
@@ -79,28 +78,26 @@ export function parseModel(model: ModelReference): ResolvedModel {
 }
 
 export function normalizeAgentName(agent: string): string {
-  return agent.replace(/[\s\u200B-\u200D\uFEFF]/g, "").toLowerCase()
+  return agent.replace(/[\s\u200B-\u200D\uFEFF]/g, "").toLowerCase();
 }
 
 function entryToFallbackModel(entry: FallbackModel | FallbackModelConfig): FallbackModel {
   if ("model" in entry) {
-    const parsed = parseModel(entry.model)
-    const { model: _m, variant, reasoningEffort, temperature, topP, maxTokens, thinking } = entry
-    const result: FallbackModel = { providerID: parsed.providerID, modelID: parsed.modelID }
-    if (variant !== undefined) result.variant = variant
-    if (reasoningEffort !== undefined) result.reasoningEffort = reasoningEffort
-    if (temperature !== undefined) result.temperature = temperature
-    if (topP !== undefined) result.topP = topP
-    if (maxTokens !== undefined) result.maxTokens = maxTokens
-    if (thinking !== undefined) result.thinking = thinking
-    return result
+    const parsed = parseModel(entry.model);
+    const { model: _m, variant, reasoningEffort, temperature, topP, maxTokens, thinking } = entry;
+    const result: FallbackModel = { providerID: parsed.providerID, modelID: parsed.modelID };
+    if (variant !== undefined) result.variant = variant;
+    if (reasoningEffort !== undefined) result.reasoningEffort = reasoningEffort;
+    if (temperature !== undefined) result.temperature = temperature;
+    if (topP !== undefined) result.topP = topP;
+    if (maxTokens !== undefined) result.maxTokens = maxTokens;
+    if (thinking !== undefined) result.thinking = thinking;
+    return result;
   }
-  return entry
+  return entry;
 }
 
-function normalizeChain(
-  raw: ModelReference | FallbackEntry[] | undefined,
-): FallbackEntry[] {
+function normalizeChain(raw: ModelReference | FallbackEntry[] | undefined): FallbackEntry[] {
   if (raw === undefined) return [];
   if (Array.isArray(raw)) return raw;
   return [raw];
@@ -123,8 +120,8 @@ function normalizeAgentMap(
 
 function writeDefaultConfig(configDir: string): string | null {
   try {
-    mkdirSync(configDir, { recursive: true })
-    const configPath = join(configDir, CONFIG_FILENAME)
+    mkdirSync(configDir, { recursive: true });
+    const configPath = join(configDir, CONFIG_FILENAME);
     const content = JSON.stringify(
       {
         $schema: SCHEMA_URL,
@@ -137,11 +134,12 @@ function writeDefaultConfig(configDir: string): string | null {
       },
       null,
       2,
-    )
-    writeFileSync(configPath, content + "\n", "utf-8")
-    return configPath
-  } catch { /* non-critical: best-effort default config write */
-    return null
+    );
+    writeFileSync(configPath, `${content}\n`, "utf-8");
+    return configPath;
+  } catch {
+    /* non-critical: best-effort default config write */
+    return null;
   }
 }
 
@@ -149,8 +147,8 @@ export function loadConfig(): FallbackConfig {
   const configPath = findConfigFile();
 
   if (!configPath) {
-    writeDefaultConfig(getConfigDir())
-    return DEFAULT_CONFIG
+    writeDefaultConfig(getConfigDir());
+    return DEFAULT_CONFIG;
   }
 
   try {
@@ -164,12 +162,15 @@ export function loadConfig(): FallbackConfig {
       cooldownMs: userConfig.cooldownMs ?? DEFAULT_CONFIG.cooldownMs,
       maxRetries: userConfig.maxRetries ?? DEFAULT_CONFIG.maxRetries,
       logging: userConfig.logging ?? DEFAULT_CONFIG.logging,
-      largeContextFallback: userConfig.largeContextFallback ? {
-        ...userConfig.largeContextFallback,
-        minContextRatio: userConfig.largeContextFallback.minContextRatio ?? 0.1,
-      } : undefined,
+      largeContextFallback: userConfig.largeContextFallback
+        ? {
+            ...userConfig.largeContextFallback,
+            minContextRatio: userConfig.largeContextFallback.minContextRatio ?? 0.1,
+          }
+        : undefined,
     };
-  } catch { /* non-critical: malformed config, use defaults */
+  } catch {
+    /* non-critical: malformed config, use defaults */
     return DEFAULT_CONFIG;
   }
 }
@@ -178,36 +179,40 @@ export function getFallbackChain(
   config: FallbackConfig,
   agent: string | undefined,
 ): FallbackModel[] {
-  const fallbackAgent = getFallbackAgent(config.agentFallbacks, agent)
-  const raw = fallbackAgent
-    ? config.agentFallbacks[fallbackAgent]
-    : config.defaultFallback
+  const fallbackAgent = getFallbackAgent(config.agentFallbacks, agent);
+  const raw = fallbackAgent ? config.agentFallbacks[fallbackAgent] : config.defaultFallback;
 
-  if (!raw) return []
+  if (!raw) return [];
 
-  const models: FallbackModel[] = []
+  const models: FallbackModel[] = [];
 
   for (const entry of raw) {
     if (typeof entry === "string") {
-      const parsed = parseModel(entry)
-      models.push({ providerID: parsed.providerID, modelID: parsed.modelID })
+      const parsed = parseModel(entry);
+      models.push({ providerID: parsed.providerID, modelID: parsed.modelID });
     } else if ("model" in entry) {
-      models.push(entryToFallbackModel(entry))
+      models.push(entryToFallbackModel(entry));
     } else {
-      models.push(entry)
+      models.push(entry);
     }
   }
 
-  return models
+  return models;
 }
 
 function getFallbackAgent(
   agentFallbacks: AgentFallbackMap,
   agent: string | undefined,
 ): string | undefined {
-  if (!agent) return undefined
-  const normalizedAgent = normalizeAgentName(agent)
+  if (!agent) return undefined;
+  const normalizedAgent = normalizeAgentName(agent);
   return Object.keys(agentFallbacks).find(
-    configuredAgent => normalizeAgentName(configuredAgent) === normalizedAgent,
-  )
+    (configuredAgent) => normalizeAgentName(configuredAgent) === normalizedAgent,
+  );
+}
+
+export function getParsedLcfModel(config: FallbackConfig): ResolvedModel | null {
+  const lcf = config.largeContextFallback;
+  if (!lcf) return null;
+  return parseModel(lcf.model);
 }

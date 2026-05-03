@@ -1,10 +1,6 @@
 import type { PluginInput } from "@opencode-ai/plugin";
 import type { FallbackConfig, FallbackModel } from "./types";
-import {
-  BACKOFF_BASE_MS,
-  REVERT_DELAY_MS,
-  TOAST_DURATION_MS,
-} from "./constants";
+import { BACKOFF_BASE_MS, REVERT_DELAY_MS, TOAST_DURATION_MS } from "./constants";
 import { getFallbackChain } from "./config";
 import { isModelInCooldown } from "./provider-state";
 import {
@@ -13,14 +9,12 @@ import {
   deleteLargeContextPhase,
 } from "./state/context-state";
 import { markModelCooldown } from "./provider-state";
-import {
-  incrementBackoff,
-  resetBackoff,
-  activateCooldown,
-} from "./session-state";
+import { incrementBackoff, resetBackoff, activateCooldown } from "./session-state";
 import type { Logger, ChatMessageInput } from "./session-utils";
 import { showToastSafely, abortSession, fetchSessionData } from "./session-utils";
 import type { PromptPart } from "./message";
+import { formatModelKey } from "./utils/model";
+import { serializeError } from "./utils/error";
 
 export async function revertAndPrompt(
   sessionID: string,
@@ -52,10 +46,26 @@ export async function revertAndPrompt(
     await logger.warn("Prompt failed", {
       sessionID,
       model,
-      error: err instanceof Error ? err.message : String(err),
+      error: serializeError(err),
     });
     return false;
   }
+}
+
+export async function getValidatedFallbackChain(
+  config: FallbackConfig,
+  agent: string | undefined,
+  sessionID: string,
+  logger: Logger,
+): Promise<FallbackModel[]> {
+  const chain = getFallbackChain(config, agent);
+  if (chain.length === 0) {
+    await logger.info("No fallback chain configured for this agent, skipping", {
+      sessionID,
+      agent,
+    });
+  }
+  return chain;
 }
 
 export async function tryFallbackChain(
@@ -69,31 +79,18 @@ export async function tryFallbackChain(
 ): Promise<boolean> {
   for (let i = 0; i < chain.length; i++) {
     if (isModelInCooldown(chain[i].providerID, chain[i].modelID)) {
-      await logger.info(
-        `Skipping model in cooldown ${chain[i].providerID}/${chain[i].modelID}`,
-        {
-          sessionID,
-          model: chain[i],
-          remaining: chain.length - i - 1,
-        },
-      );
+      await logger.info(`Skipping model in cooldown ${formatModelKey(chain[i])}`, {
+        sessionID,
+        model: chain[i],
+        remaining: chain.length - i - 1,
+      });
       continue;
     }
     await logger.info(`Trying fallback ${i + 1}/${chain.length}`, {
       sessionID,
       model: chain[i],
     });
-    if (
-      await revertAndPrompt(
-        sessionID,
-        agent,
-        parts,
-        messageID,
-        chain[i],
-        logger,
-        context,
-      )
-    ) {
+    if (await revertAndPrompt(sessionID, agent, parts, messageID, chain[i], logger, context)) {
       await logger.info("Fallback chain succeeded", {
         sessionID,
         triedCount: i + 1,
@@ -102,7 +99,7 @@ export async function tryFallbackChain(
         context,
         {
           title: "Model Fallback",
-          message: `Switched to ${chain[i].providerID}/${chain[i].modelID}`,
+          message: `Switched to ${formatModelKey(chain[i])}`,
           variant: "info",
           duration: TOAST_DURATION_MS,
         },
@@ -134,14 +131,9 @@ export async function handleRetry(
   logger: Logger,
   context: PluginInput,
   hookInput?: ChatMessageInput,
-) {
+): Promise<void> {
   const backoffLevel = incrementBackoff(sessionID);
-  const { extracted, currentModel } = await fetchSessionData(
-    sessionID,
-    context,
-    logger,
-    hookInput,
-  );
+  const { extracted, currentModel } = await fetchSessionData(sessionID, context, logger, hookInput);
   if (!extracted) {
     await logger.error("Cannot retry: missing user message", { sessionID });
     return;
@@ -151,10 +143,9 @@ export async function handleRetry(
 
   if (currentModel && backoffLevel <= config.maxRetries) {
     const waitMs = BACKOFF_BASE_MS * Math.pow(2, backoffLevel - 1);
-    await logger.info(
-      `Backoff retry ${backoffLevel}/${config.maxRetries} (${waitMs}ms)`,
-      { sessionID },
-    );
+    await logger.info(`Backoff retry ${backoffLevel}/${config.maxRetries} (${waitMs}ms)`, {
+      sessionID,
+    });
     await new Promise((resolve) => setTimeout(resolve, waitMs));
     const ok = await revertAndPrompt(
       sessionID,
@@ -176,10 +167,9 @@ export async function handleRetry(
 
   resetBackoff(sessionID);
   if (!currentModel) {
-    await logger.warn(
-      "No current model available, going straight to fallback chain",
-      { sessionID },
-    );
+    await logger.warn("No current model available, going straight to fallback chain", {
+      sessionID,
+    });
   } else {
     await showToastSafely(
       context,
@@ -191,19 +181,12 @@ export async function handleRetry(
       },
       logger,
     );
-    await logger.info(
-      `Retries exhausted (${backoffLevel}), starting fallback chain`,
-      { sessionID },
-    );
-  }
-  const chain = getFallbackChain(config, extracted.info.agent);
-  if (chain.length === 0) {
-    await logger.info("No fallback chain configured for this agent, skipping", {
+    await logger.info(`Retries exhausted (${backoffLevel}), starting fallback chain`, {
       sessionID,
-      agent: extracted.info.agent,
     });
-    return;
   }
+  const chain = await getValidatedFallbackChain(config, extracted.info.agent, sessionID, logger);
+  if (chain.length === 0) return;
   await tryFallbackChain(
     sessionID,
     chain,
@@ -221,40 +204,26 @@ export async function handleImmediate(
   logger: Logger,
   context: PluginInput,
   hookInput?: ChatMessageInput,
-) {
+): Promise<void> {
   activateCooldown(sessionID, config.cooldownMs);
-  const { extracted, currentModel } = await fetchSessionData(
-    sessionID,
-    context,
-    logger,
-    hookInput,
-  );
+  const { extracted, currentModel } = await fetchSessionData(sessionID, context, logger, hookInput);
 
   if (currentModel) {
-    markModelCooldown(
-      currentModel.providerID,
-      currentModel.modelID,
-      config.cooldownMs,
-    );
-    setSessionCooldownModel(
-      sessionID,
-      currentModel.providerID,
-      currentModel.modelID,
-    );
+    markModelCooldown(currentModel.providerID, currentModel.modelID, config.cooldownMs);
+    setSessionCooldownModel(sessionID, currentModel.providerID, currentModel.modelID);
     await showToastSafely(
       context,
       {
         title: "Model Error",
-        message: `${currentModel.providerID}/${currentModel.modelID} failed, switching to fallback`,
+        message: `${formatModelKey(currentModel)} failed, switching to fallback`,
         variant: "warning",
         duration: TOAST_DURATION_MS,
       },
       logger,
     );
-    await logger.info(
-      `Model ${currentModel.providerID}/${currentModel.modelID} in cooldown`,
-      { sessionID },
-    );
+    await logger.info(`Model ${formatModelKey(currentModel)} in cooldown`, {
+      sessionID,
+    });
   }
 
   if (!extracted) {
@@ -264,17 +233,11 @@ export async function handleImmediate(
 
   await abortSession(sessionID, context);
   deleteLargeContextPhase(sessionID);
-  const chain = getFallbackChain(config, extracted.info.agent);
+  const chain = await getValidatedFallbackChain(config, extracted.info.agent, sessionID, logger);
   await logger.info(`Immediate fallback chain (${chain.length} models)`, {
     sessionID,
   });
-  if (chain.length === 0) {
-    await logger.info("No fallback chain configured for this agent, skipping", {
-      sessionID,
-      agent: extracted.info.agent,
-    });
-    return;
-  }
+  if (chain.length === 0) return;
   await tryFallbackChain(
     sessionID,
     chain,

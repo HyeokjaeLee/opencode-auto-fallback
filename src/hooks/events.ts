@@ -1,18 +1,14 @@
 import type { PluginInput } from "@opencode-ai/plugin";
 import type { FallbackConfig } from "../types";
-import { ABORT_DELAY_MS } from "../constants";
-import { parseModel } from "../config";
+import { LARGE_CONTEXT_CONTINUATION } from "../constants";
+import { getParsedLcfModel } from "../config";
 import {
   classifyError,
   isTransientErrorMessage,
   isPermanentRateLimitMessage,
   isContextOverflowError,
 } from "../decision";
-import {
-  isCooldownActive,
-  resetIfExpired,
-  removeSession,
-} from "../session-state";
+import { isCooldownActive, resetIfExpired, removeSession } from "../session-state";
 import { isModelInCooldown, cleanupExpired } from "../provider-state";
 import {
   getCurrentModel,
@@ -28,7 +24,9 @@ import {
   getSessionCooldownModel,
 } from "../state/context-state";
 import type { Logger } from "../session-utils";
-import { abortSession, fetchSessionData } from "../session-utils";
+import { formatModelKey, isSameModel } from "../utils/model";
+import { serializeError } from "../utils/error";
+import { abortSession, abortSessionSafely, fetchSessionData } from "../session-utils";
 import { handleRetry, handleImmediate } from "../fallback";
 import {
   handleLargeContextSwitch,
@@ -39,11 +37,7 @@ import {
   hasActiveChildren,
 } from "../large-context";
 
-export function createEventHandler(
-  config: FallbackConfig,
-  logger: Logger,
-  context: PluginInput,
-) {
+export function createEventHandler(config: FallbackConfig, logger: Logger, context: PluginInput) {
   return async ({ event }: { event: { type: string; properties: unknown } }) => {
     if (event.type === "session.error") {
       await handleSessionError(config, logger, context, event);
@@ -64,7 +58,7 @@ async function handleSessionError(
   logger: Logger,
   context: PluginInput,
   event: { type: string; properties: unknown },
-) {
+): Promise<void> {
   const props = event.properties as {
     sessionID?: string;
     error?: {
@@ -97,23 +91,17 @@ async function handleSessionError(
   }
 
   // Context overflow detection
-  if (err.data?.message && isContextOverflowError(err.data.message)) {
+  if (err.data.message && isContextOverflowError(err.data.message)) {
     const lcf = config.largeContextFallback;
     if (lcf) {
-      try {
-        await context.client.session.abort({ path: { id: sessionID } });
-        await new Promise((resolve) =>
-          setTimeout(resolve, ABORT_DELAY_MS),
-        );
-      } catch {
-        /* session may already be idle */
-      }
+      await abortSessionSafely(sessionID, context);
 
       const phase = getLargeContextPhase(sessionID);
       const agent = getSessionOriginalAgent(sessionID);
 
       if (phase === "active") {
-        const lcfParsed = parseModel(lcf.model);
+        const lcfParsed = getParsedLcfModel(config);
+        if (!lcfParsed) return;
         setCompactionTarget(sessionID, "large");
         try {
           await context.client.session.summarize({
@@ -123,7 +111,8 @@ async function handleSessionError(
               modelID: lcfParsed.modelID,
             },
           });
-        } catch { /* non-critical: summarize may fail if session aborted mid-call */
+        } catch {
+          /* non-critical: summarize may fail if session aborted mid-call */
           clearCompactionTarget(sessionID);
         }
         return;
@@ -140,10 +129,9 @@ async function handleSessionError(
         if (switched) return;
       } else {
         const curModel = getCurrentModel(sessionID);
-        await logger.info(
-          "Error: context overflow for non-registered agent, manual compact",
-          { sessionID },
-        );
+        await logger.info("Error: context overflow for non-registered agent, manual compact", {
+          sessionID,
+        });
         try {
           await context.client.session.summarize({
             path: { id: sessionID },
@@ -166,8 +154,7 @@ async function handleSessionError(
 
   const isAuthError = err.name === "ProviderAuthError";
   const isModelNotFoundError =
-    err.name === "ProviderModelNotFoundError" ||
-    err.data.message?.includes("Model not found");
+    err.name === "ProviderModelNotFoundError" || err.data.message.includes("Model not found");
   const statusCode: number | undefined = err.data.statusCode;
   const isRetryable: boolean | undefined =
     isAuthError || isModelNotFoundError ? false : err.data.isRetryable;
@@ -185,20 +172,12 @@ async function handleSessionError(
   if (cooldownActive) {
     const currentModel = getCurrentModel(sessionID);
     const cooldownModel = getSessionCooldownModel(sessionID);
-    if (
-      currentModel &&
-      cooldownModel &&
-      (currentModel.providerID !== cooldownModel.providerID ||
-        currentModel.modelID !== cooldownModel.modelID)
-    ) {
-      await logger.info(
-        "Model changed during cooldown, allowing error through",
-        {
-          sessionID,
-          currentModel,
-          cooldownModel,
-        },
-      );
+    if (currentModel && cooldownModel && !isSameModel(currentModel, cooldownModel)) {
+      await logger.info("Model changed during cooldown, allowing error through", {
+        sessionID,
+        currentModel,
+        cooldownModel,
+      });
     } else {
       await logger.info("session.error during cooldown, ignoring", {
         sessionID,
@@ -234,7 +213,7 @@ async function handleSessionCompacted(
   logger: Logger,
   context: PluginInput,
   event: { type: string; properties: unknown },
-) {
+): Promise<void> {
   const props = event.properties as { sessionID: string };
   const phase = getLargeContextPhase(props.sessionID);
   await logger.info("Compacted event received", {
@@ -243,22 +222,16 @@ async function handleSessionCompacted(
   });
 
   if (phase === "summarizing") {
-    await logger.info(
-      "Compacted: summarizing complete, next idle will switch back",
-      {
-        sessionID: props.sessionID,
-      },
-    );
+    await logger.info("Compacted: summarizing complete, next idle will switch back", {
+      sessionID: props.sessionID,
+    });
     return;
   }
 
   if (phase === "active") {
-    await logger.info(
-      "Compacted: large model compaction complete, continuing on large model",
-      {
-        sessionID: props.sessionID,
-      },
-    );
+    await logger.info("Compacted: large model compaction complete, continuing on large model", {
+      sessionID: props.sessionID,
+    });
     context.client.session
       .prompt({
         path: { id: props.sessionID },
@@ -266,7 +239,7 @@ async function handleSessionCompacted(
           parts: [
             {
               type: "text" as const,
-              text: "Continue from where you left off.",
+              text: LARGE_CONTEXT_CONTINUATION,
             },
           ],
         },
@@ -274,10 +247,9 @@ async function handleSessionCompacted(
       .catch(async (err) => {
         await logger.warn("Self-compaction: continuation prompt failed", {
           sessionID: props.sessionID,
-          error: err instanceof Error ? err.message : String(err),
+          error: serializeError(err),
         });
       });
-    return;
   }
 }
 
@@ -286,7 +258,7 @@ async function handleSessionIdle(
   logger: Logger,
   context: PluginInput,
   event: { type: string; properties: unknown },
-) {
+): Promise<void> {
   const props = event.properties as { sessionID: string };
   const phase = getLargeContextPhase(props.sessionID);
   const lcf = config.largeContextFallback;
@@ -296,27 +268,15 @@ async function handleSessionIdle(
   if (lcf && (!agent || (agent && !isRegisteredAgent(agent)))) {
     const previousAgent = agent;
     try {
-      const { extracted, messages } = await fetchSessionData(
-        props.sessionID,
-        context,
-        logger,
-      );
+      const { extracted, messages } = await fetchSessionData(props.sessionID, context, logger);
       let recovered: string | undefined;
-      if (
-        extracted?.info?.agent &&
-        isRegisteredAgent(extracted.info.agent)
-      ) {
+      if (extracted?.info.agent && isRegisteredAgent(extracted.info.agent)) {
         recovered = extracted.info.agent;
       } else {
         const found = [...messages]
           .reverse()
-          .find(
-            (m) =>
-              m.info.role === "user" &&
-              m.info.agent &&
-              isRegisteredAgent(m.info.agent),
-          );
-        recovered = found?.info?.agent;
+          .find((m) => m.info.role === "user" && m.info.agent && isRegisteredAgent(m.info.agent));
+        recovered = found?.info.agent;
       }
       if (recovered) {
         agent = recovered;
@@ -338,41 +298,30 @@ async function handleSessionIdle(
   if (!phase) {
     if (!lcf || !agent) return;
 
-    const thresholdResult = await checkContextThreshold(
-      props.sessionID,
-      context,
-      logger,
-    );
+    const thresholdResult = await checkContextThreshold(props.sessionID, context, logger);
     if (!thresholdResult.atThreshold) return;
 
     if (isRegisteredAgent(agent)) {
-      await logger.info(
-        "Idle: registered agent at threshold, checking guards",
-        {
-          sessionID: props.sessionID,
-          agent,
-          usage: thresholdResult.usage,
-          limit: thresholdResult.limit,
-        },
-      );
-      const parsedModel = parseModel(lcf.model);
+      await logger.info("Idle: registered agent at threshold, checking guards", {
+        sessionID: props.sessionID,
+        agent,
+        usage: thresholdResult.usage,
+        limit: thresholdResult.limit,
+      });
+      const parsedModel = getParsedLcfModel(config);
+      if (!parsedModel) return;
       const curModel = getCurrentModel(props.sessionID);
       if (curModel) {
         // Guard: already on large model
-        if (
-          curModel.providerID === parsedModel.providerID &&
-          curModel.modelID === parsedModel.modelID
-        ) {
+        if (isSameModel(curModel, parsedModel)) {
           await logger.info("Idle: guard — already on large model", {
             sessionID: props.sessionID,
-            model: `${curModel.providerID}/${curModel.modelID}`,
+            model: formatModelKey(curModel),
           });
           return;
         }
         // Guard: large model in cooldown
-        if (
-          isModelInCooldown(parsedModel.providerID, parsedModel.modelID)
-        ) {
+        if (isModelInCooldown(parsedModel.providerID, parsedModel.modelID)) {
           await logger.info("Idle: guard — large model in cooldown", {
             sessionID: props.sessionID,
             model: lcf.model,
@@ -380,9 +329,7 @@ async function handleSessionIdle(
           return;
         }
         // Guard: context window ratio
-        const largeLimit = getModelContextLimit(
-          `${parsedModel.providerID}/${parsedModel.modelID}`,
-        );
+        const largeLimit = getModelContextLimit(formatModelKey(parsedModel));
         if (
           largeLimit &&
           shouldSkipLargeContextFallback(
@@ -391,25 +338,19 @@ async function handleSessionIdle(
             lcf.minContextRatio ?? 0.1,
           )
         ) {
-          await logger.info(
-            "Idle: guard — context window ratio too small",
-            {
-              sessionID: props.sessionID,
-              currentLimit: thresholdResult.limit,
-              largeLimit,
-              minRatio: lcf.minContextRatio ?? 0.1,
-            },
-          );
+          await logger.info("Idle: guard — context window ratio too small", {
+            sessionID: props.sessionID,
+            currentLimit: thresholdResult.limit,
+            largeLimit,
+            minRatio: lcf.minContextRatio ?? 0.1,
+          });
           return;
         }
       }
-      await logger.info(
-        "Idle: all guards passed, switching to large model",
-        {
-          sessionID: props.sessionID,
-          largeModel: lcf.model,
-        },
-      );
+      await logger.info("Idle: all guards passed, switching to large model", {
+        sessionID: props.sessionID,
+        largeModel: lcf.model,
+      });
       const switched = await handleLargeContextSwitch(
         props.sessionID,
         lcf,
@@ -424,13 +365,10 @@ async function handleSessionIdle(
     } else {
       // Non-registered agent: manually compact
       const curModel = getCurrentModel(props.sessionID);
-      await logger.info(
-        "Idle: non-registered agent threshold reached, triggering manual compact",
-        {
-          sessionID: props.sessionID,
-          agent,
-        },
-      );
+      await logger.info("Idle: non-registered agent threshold reached, triggering manual compact", {
+        sessionID: props.sessionID,
+        agent,
+      });
       await context.client.session.summarize({
         path: { id: props.sessionID },
         ...(curModel
@@ -454,12 +392,9 @@ async function handleSessionIdle(
   // Phase: active — check self-compaction or return condition
   if (phase === "active") {
     if (!lcf) {
-      await logger.info(
-        "Idle: active — lcf not configured, clearing phase",
-        {
-          sessionID: props.sessionID,
-        },
-      );
+      await logger.info("Idle: active — lcf not configured, clearing phase", {
+        sessionID: props.sessionID,
+      });
       deleteLargeContextPhase(props.sessionID);
       return;
     }
@@ -467,20 +402,14 @@ async function handleSessionIdle(
     const hasChildren = await hasActiveChildren(props.sessionID, context);
 
     // Priority 1: self-compaction if at threshold
-    const largeThreshold = await checkContextThreshold(
-      props.sessionID,
-      context,
-      logger,
-    );
+    const largeThreshold = await checkContextThreshold(props.sessionID, context, logger);
     if (largeThreshold.atThreshold) {
-      await logger.info(
-        "Idle: large model context full, self-compacting",
-        {
-          sessionID: props.sessionID,
-          hasChildren,
-        },
-      );
-      const lcfParsed = parseModel(lcf.model);
+      await logger.info("Idle: large model context full, self-compacting", {
+        sessionID: props.sessionID,
+        hasChildren,
+      });
+      const lcfParsed = getParsedLcfModel(config);
+      if (!lcfParsed) return;
       setCompactionTarget(props.sessionID, "large");
       try {
         await context.client.session.summarize({
@@ -490,14 +419,12 @@ async function handleSessionIdle(
             modelID: lcfParsed.modelID,
           },
         });
-      } catch { /* non-critical: self-compaction may fail if session state changed */
+      } catch {
+        /* non-critical: self-compaction may fail if session state changed */
         clearCompactionTarget(props.sessionID);
-        await logger.info(
-          "Idle: self-compaction failed, cleared compactionTarget",
-          {
-            sessionID: props.sessionID,
-          },
-        );
+        await logger.info("Idle: self-compaction failed, cleared compactionTarget", {
+          sessionID: props.sessionID,
+        });
       }
       return;
     }
@@ -513,15 +440,11 @@ async function handleSessionIdle(
           info: { role: string };
           parts: Array<{ type: string; state?: { status: string } }>;
         }>;
-        const lastAsst = [...raw]
-          .reverse()
-          .find((m) => m.info.role === "assistant");
+        const lastAsst = [...raw].reverse().find((m) => m.info.role === "assistant");
         if (lastAsst) {
           autoContinuePending = lastAsst.parts.some(
             (p) =>
-              p.type === "tool" &&
-              (p.state?.status === "pending" ||
-                p.state?.status === "running"),
+              p.type === "tool" && (p.state?.status === "pending" || p.state?.status === "running"),
           );
         }
       } catch {
@@ -529,37 +452,27 @@ async function handleSessionIdle(
       }
 
       if (!autoContinuePending) {
-        await logger.info(
-          "Idle: return condition met (no children, no pending tools)",
-          {
-            sessionID: props.sessionID,
-          },
-        );
+        await logger.info("Idle: return condition met (no children, no pending tools)", {
+          sessionID: props.sessionID,
+        });
         await handleLargeContextReturn(props.sessionID, context, logger);
         return;
       }
-      await logger.info(
-        "Idle: return waiting — pending tool calls in last response",
-        {
-          sessionID: props.sessionID,
-        },
-      );
+      await logger.info("Idle: return waiting — pending tool calls in last response", {
+        sessionID: props.sessionID,
+      });
     } else {
-      await logger.info(
-        "Idle: return blocked — active children present",
-        {
-          sessionID: props.sessionID,
-          hasChildren,
-        },
-      );
+      await logger.info("Idle: return blocked — active children present", {
+        sessionID: props.sessionID,
+        hasChildren,
+      });
     }
     return;
   }
 
   // Phase: summarizing — complete switch-back
-  if (phase === "summarizing" && lcf) {
+  if (lcf) {
     await handleLargeContextCompletion(props.sessionID, context, logger);
-    return;
   }
 }
 
@@ -568,7 +481,7 @@ async function handleSessionStatus(
   logger: Logger,
   context: PluginInput,
   event: { type: string; properties: unknown },
-) {
+): Promise<void> {
   const props = event.properties as {
     sessionID: string;
     status: {
@@ -583,7 +496,7 @@ async function handleSessionStatus(
   if (statusType === "busy" || statusType === "idle") {
     const phase = getLargeContextPhase(props.sessionID);
     const agent = getSessionOriginalAgent(props.sessionID);
-    await logger.info("Session status: " + statusType, {
+    await logger.info(`Session status: ${statusType}`, {
       sessionID: props.sessionID,
       phase: phase ?? "none",
       agent: agent ?? "unknown",
@@ -593,20 +506,16 @@ async function handleSessionStatus(
   if (props.status.type === "retry" && props.status.message) {
     if (isPermanentRateLimitMessage(props.status.message)) {
       if (isCooldownActive(props.sessionID)) {
-        await logger.info(
-          "Permanent rate-limit during cooldown, ignoring",
-          { sessionID: props.sessionID },
-        );
+        await logger.info("Permanent rate-limit during cooldown, ignoring", {
+          sessionID: props.sessionID,
+        });
         return;
       }
 
-      await logger.info(
-        "Permanent rate-limit detected, falling back immediately",
-        {
-          sessionID: props.sessionID,
-          message: props.status.message,
-        },
-      );
+      await logger.info("Permanent rate-limit detected, falling back immediately", {
+        sessionID: props.sessionID,
+        message: props.status.message,
+      });
 
       await abortSession(props.sessionID, context);
       await handleImmediate(props.sessionID, config, logger, context);
@@ -626,16 +535,13 @@ async function handleSessionStatus(
         return;
       }
 
-      await logger.info(
-        "Transient rate-limit retries exhausted, falling back",
-        {
-          sessionID: props.sessionID,
-          message: props.status.message,
-          attempt,
-          maxRetries: config.maxRetries,
-          cooldownActive: isCooldownActive(props.sessionID),
-        },
-      );
+      await logger.info("Transient rate-limit retries exhausted, falling back", {
+        sessionID: props.sessionID,
+        message: props.status.message,
+        attempt,
+        maxRetries: config.maxRetries,
+        cooldownActive: isCooldownActive(props.sessionID),
+      });
 
       if (isCooldownActive(props.sessionID)) {
         await logger.info("Retry event during cooldown, ignoring", {
@@ -662,7 +568,7 @@ async function handleSessionStatus(
 async function handleSessionDeleted(
   logger: Logger,
   event: { type: string; properties: unknown },
-) {
+): Promise<void> {
   const props = event.properties as { info?: { id?: string } };
   if (props.info?.id) {
     removeSession(props.info.id);

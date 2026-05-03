@@ -1,11 +1,10 @@
 import type { PluginInput } from "@opencode-ai/plugin";
 import type { FallbackConfig } from "./types";
-import {
-  LARGE_CONTEXT_CONTINUATION,
-  RETURN_CONTINUATION,
-} from "./constants";
+import { LARGE_CONTEXT_CONTINUATION, RETURN_CONTINUATION } from "./constants";
 import { parseModel } from "./config";
 import { isModelInCooldown } from "./provider-state";
+import { formatModelKey } from "./utils/model";
+import { serializeError } from "./utils/error";
 import {
   setActiveFallbackParams,
   clearActiveFallbackParams,
@@ -18,8 +17,8 @@ import {
   getModelInputLimit,
   getModelOutputLimit,
   setRestoreModel,
-  getRestoreModel,
   deleteRestoreModel,
+  getRecoveryModel,
   getSessionOriginalAgent,
   isRegisteredAgent,
   getCompactionReserved,
@@ -27,27 +26,22 @@ import {
 import type { Logger } from "./session-utils";
 import { fetchSessionData } from "./session-utils";
 
-export async function hasActiveChildren(
-  sessionID: string,
-  context: PluginInput,
-): Promise<boolean> {
+export async function hasActiveChildren(sessionID: string, context: PluginInput): Promise<boolean> {
   try {
     const resp = await context.client.session.children({
       path: { id: sessionID },
     });
-    const children = (resp?.data ?? []) as Array<{ id: string }>;
+    const children = (resp.data ?? []) as Array<{ id: string }>;
     if (children.length === 0) return false;
     const statusResp = await context.client.session.status();
-    const allStatuses = (statusResp?.data ?? {}) as Record<
-      string,
-      { type: string }
-    >;
+    const allStatuses = (statusResp.data ?? {}) as Record<string, { type: string }>;
     for (const c of children) {
       const s = allStatuses[c.id];
-      if (s?.type === "busy" || s?.type === "retry") return true;
+      if (s.type === "busy" || s.type === "retry") return true;
     }
     return false;
-  } catch { /* non-critical: children API may fail, fail-open — stale or missing status means child is done */
+  } catch {
+    /* non-critical: children API may fail, fail-open — stale or missing status means child is done */
     return false;
   }
 }
@@ -111,20 +105,18 @@ export async function checkContextThreshold(
 
     const curModel = getCurrentModel(sessionID);
     if (!curModel) return { atThreshold: false, usage: 0, limit: 0 };
-    const modelKey = `${curModel.providerID}/${curModel.modelID}`;
+    const key = formatModelKey(curModel);
 
-    const ctxLimit = getModelContextLimit(modelKey);
-    if (!ctxLimit || ctxLimit === 0)
-      return { atThreshold: false, usage: 0, limit: 0 };
+    const ctxLimit = getModelContextLimit(key);
+    if (!ctxLimit || ctxLimit === 0) return { atThreshold: false, usage: 0, limit: 0 };
 
-    const inputLimit = getModelInputLimit(modelKey);
-    const outputLimit = getModelOutputLimit(modelKey);
+    const inputLimit = getModelInputLimit(key);
+    const outputLimit = getModelOutputLimit(key);
 
     const count = lastInput + lastOutput + lastCacheRead + lastCacheWrite;
     const maxOutput = Math.min(outputLimit ?? 32_000, 32_000);
     const configReserved = getCompactionReserved();
-    const reserved =
-      configReserved ?? Math.min(20_000, outputLimit ?? maxOutput);
+    const reserved = configReserved ?? Math.min(20_000, outputLimit ?? maxOutput);
     const usable = inputLimit
       ? Math.max(0, inputLimit - reserved)
       : Math.max(0, ctxLimit - maxOutput);
@@ -153,7 +145,7 @@ export async function checkContextThreshold(
   } catch (err) {
     await logger.info("Idle: threshold check error", {
       sessionID,
-      error: err instanceof Error ? err.message : String(err),
+      error: serializeError(err),
     });
     return { atThreshold: false, usage: 0, limit: 0 };
   }
@@ -175,8 +167,7 @@ export async function handleLargeContextSwitch(
   errorMessage: string,
 ): Promise<boolean> {
   const phase = getLargeContextPhase(sessionID);
-  if (phase === "pending" || phase === "active" || phase === "summarizing")
-    return false;
+  if (phase === "pending" || phase === "active" || phase === "summarizing") return false;
 
   const agent = getSessionOriginalAgent(sessionID);
   if (!agent || !isRegisteredAgent(agent)) return false;
@@ -203,7 +194,7 @@ export async function handleLargeContextSwitch(
       sessionID,
       agent,
       largeModel: lcf.model,
-      fromModel: `${original.providerID}/${original.modelID}`,
+      fromModel: formatModelKey(original),
       reason: errorMessage,
     });
 
@@ -219,7 +210,6 @@ export async function handleLargeContextSwitch(
 
     setLargeContextPhase(sessionID, "active");
 
-
     context.client.session
       .prompt({
         path: { id: sessionID },
@@ -230,13 +220,10 @@ export async function handleLargeContextSwitch(
         },
       })
       .catch(async (err) => {
-        await logger.warn(
-          "Large model continuation prompt failed (phase already active)",
-          {
-            sessionID,
-            error: err instanceof Error ? err.message : String(err),
-          },
-        );
+        await logger.warn("Large model continuation prompt failed (phase already active)", {
+          sessionID,
+          error: serializeError(err),
+        });
       });
 
     return true;
@@ -247,7 +234,7 @@ export async function handleLargeContextSwitch(
     await logger.error("Failed to switch to large context model", {
       sessionID,
       largeModel: lcf.model,
-      error: err instanceof Error ? err.message : String(err),
+      error: serializeError(err),
     });
     return false;
   }
@@ -258,7 +245,7 @@ export async function handleLargeContextReturn(
   context: PluginInput,
   logger: Logger,
 ): Promise<void> {
-  const original = getRestoreModel(sessionID) ?? getOriginalModel(sessionID);
+  const original = getRecoveryModel(sessionID);
   if (!original) {
     await logger.error("Return: no original model found, clearing phase", {
       sessionID,
@@ -271,14 +258,11 @@ export async function handleLargeContextReturn(
   const current = getCurrentModel(sessionID);
   const compactModel = current ?? original;
 
-  await logger.info(
-    "Return condition: compacting with large model for switch-back",
-    {
-      sessionID,
-      originalModel: `${original.providerID}/${original.modelID}`,
-      compactModel: `${compactModel.providerID}/${compactModel.modelID}`,
-    },
-  );
+  await logger.info("Return condition: compacting with large model for switch-back", {
+    sessionID,
+    originalModel: formatModelKey(original),
+    compactModel: formatModelKey(compactModel),
+  });
 
   setLargeContextPhase(sessionID, "summarizing");
 
@@ -297,10 +281,9 @@ export async function handleLargeContextReturn(
   } catch (err) {
     await logger.error("Return: compaction failed", {
       sessionID,
-      error: err instanceof Error ? err.message : String(err),
+      error: serializeError(err),
     });
     deleteLargeContextPhase(sessionID);
-
   }
 }
 
@@ -309,7 +292,7 @@ export async function handleLargeContextCompletion(
   context: PluginInput,
   logger: Logger,
 ): Promise<void> {
-  const original = getRestoreModel(sessionID) ?? getOriginalModel(sessionID);
+  const original = getRecoveryModel(sessionID);
   if (!original) {
     await logger.error("Switch-back: no original model found, clearing phase", {
       sessionID,
@@ -319,13 +302,10 @@ export async function handleLargeContextCompletion(
     return;
   }
 
-  await logger.info(
-    "Large context work done, compaction complete, restoring model",
-    {
-      sessionID,
-      originalModel: `${original.providerID}/${original.modelID}`,
-    },
-  );
+  await logger.info("Large context work done, compaction complete, restoring model", {
+    sessionID,
+    originalModel: formatModelKey(original),
+  });
 
   deleteLargeContextPhase(sessionID);
   deleteRestoreModel(sessionID);
@@ -341,15 +321,12 @@ export async function handleLargeContextCompletion(
     .catch(async (err) => {
       await logger.warn("Switch-back: continuation prompt failed", {
         sessionID,
-        error: err instanceof Error ? err.message : String(err),
+        error: serializeError(err),
       });
     });
 
-  await logger.info(
-    "Switch-back: continuation sent, session resumed on original model",
-    {
-      sessionID,
-      model: `${original.providerID}/${original.modelID}`,
-    },
-  );
+  await logger.info("Switch-back: continuation sent, session resumed on original model", {
+    sessionID,
+    model: formatModelKey(original),
+  });
 }

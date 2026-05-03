@@ -1,15 +1,17 @@
 import type { PluginInput } from "@opencode-ai/plugin";
-import type { ToastOptions } from "./types";
+import type { ToastOptions, MessageWithParts, MessageInfo } from "./types";
 import { ABORT_DELAY_MS } from "./constants";
-import { createLogger } from "./log";
+import type { createLogger } from "./log";
 import { extractUserParts } from "./message";
+import type { PromptPart } from "./message";
 import type { Message as SDKMessage, Part as SDKPart } from "@opencode-ai/sdk";
 import { adaptMessages, getModelFromMessage } from "./adapters/sdk-adapter";
 import { getCurrentModel } from "./state/context-state";
+import { serializeError } from "./utils/error";
 
 /** tui is available at runtime but not typed in the SDK */
 interface ToastClient {
-  showToast(params: { body: ToastOptions }): Promise<unknown>;
+  showToast: (params: { body: ToastOptions }) => Promise<unknown>;
 }
 
 export type ClientWithTui = PluginInput["client"] & { tui?: ToastClient };
@@ -32,20 +34,26 @@ export async function showToastSafely(
 ): Promise<void> {
   try {
     const client = context.client as ClientWithTui;
-    await client.tui?.showToast({ body });
+    await client.tui.showToast({ body });
   } catch (err) {
     await logger.warn("Toast failed", {
-      error: err instanceof Error ? err.message : String(err),
+      error: serializeError(err),
     });
   }
 }
 
-export async function abortSession(
-  sessionID: string,
-  context: PluginInput,
-): Promise<void> {
+export async function abortSession(sessionID: string, context: PluginInput): Promise<void> {
   await context.client.session.abort({ path: { id: sessionID } });
   await new Promise((resolve) => setTimeout(resolve, ABORT_DELAY_MS));
+}
+
+export async function abortSessionSafely(sessionID: string, context: PluginInput): Promise<void> {
+  try {
+    await context.client.session.abort({ path: { id: sessionID } });
+    await new Promise((resolve) => setTimeout(resolve, ABORT_DELAY_MS));
+  } catch {
+    /* session may already be idle */
+  }
 }
 
 export async function fetchSessionData(
@@ -53,7 +61,11 @@ export async function fetchSessionData(
   context: PluginInput,
   logger: Logger,
   hookInput?: ChatMessageInput,
-) {
+): Promise<{
+  messages: MessageWithParts[];
+  extracted: { info: MessageInfo; parts: PromptPart[] } | null;
+  currentModel: { providerID: string; modelID: string } | undefined;
+}> {
   const messagesResponse = await context.client.session.messages({
     path: { id: sessionID },
   });
@@ -64,15 +76,12 @@ export async function fetchSessionData(
   const messages = adaptMessages(raw);
   let extracted = extractUserParts(messages);
   if (!extracted) {
-    await logger.info(
-      "No user parts found (non-synthetic), retrying with synthetic allowed",
-      { sessionID },
-    );
+    await logger.info("No user parts found (non-synthetic), retrying with synthetic allowed", {
+      sessionID,
+    });
     extracted = extractUserParts(messages, { allowSynthetic: true });
   }
-  const lastAssistant = [...raw]
-    .reverse()
-    .find((m) => m.info.role === "assistant");
+  const lastAssistant = [...raw].reverse().find((m) => m.info.role === "assistant");
   const currentModel = lastAssistant
     ? getModelFromMessage(lastAssistant.info)
     : (hookInput?.model ?? getCurrentModel(sessionID));

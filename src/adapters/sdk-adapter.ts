@@ -1,5 +1,5 @@
-import type { Message as SDKMessage, Part as SDKPart } from "@opencode-ai/sdk"
-import type { MessageInfo, MessagePart, MessageWithParts } from "../types"
+import type { Message as SDKMessage, Part as SDKPart } from "@opencode-ai/sdk";
+import type { MessageInfo, MessagePart, MessageWithParts } from "../types";
 
 function toMessageInfo(msg: SDKMessage): MessageInfo {
   if (msg.role === "assistant") {
@@ -8,7 +8,7 @@ function toMessageInfo(msg: SDKMessage): MessageInfo {
       role: "assistant",
       sessionID: msg.sessionID,
       model: { providerID: msg.providerID, modelID: msg.modelID },
-    }
+    };
   }
   return {
     id: msg.id,
@@ -16,33 +16,36 @@ function toMessageInfo(msg: SDKMessage): MessageInfo {
     sessionID: msg.sessionID,
     agent: msg.agent,
     model: msg.model,
-  }
+  };
 }
 
 function toMessagePart(part: SDKPart): MessagePart {
-  const base: MessagePart = { id: part.id, type: part.type }
+  const base: MessagePart = { id: part.id, type: part.type };
+  // eslint-disable-next-line @typescript-eslint/switch-exhaustiveness-check -- forward-compat: unknown future part types handled by default
   switch (part.type) {
     case "text":
-      return { ...base, text: part.text, synthetic: part.synthetic }
+      return { ...base, text: part.text, synthetic: part.synthetic };
     case "file":
-      return { ...base, mime: part.mime, filename: part.filename, url: part.url }
+      return { ...base, mime: part.mime, filename: part.filename, url: part.url };
     case "agent":
-      return { ...base, name: part.name }
+      return { ...base, name: part.name };
     default:
-      return base
+      return base;
   }
 }
 
-export function adaptMessages(raw: Array<{ info: SDKMessage; parts: SDKPart[] }>): MessageWithParts[] {
+export function adaptMessages(
+  raw: Array<{ info: SDKMessage; parts: SDKPart[] }>,
+): MessageWithParts[] {
   return raw.map(({ info, parts }) => ({
     info: toMessageInfo(info),
     parts: parts.map(toMessagePart),
-  }))
+  }));
 }
 
 export function getModelFromMessage(msg: SDKMessage): { providerID: string; modelID: string } {
   if (msg.role === "assistant") {
-    return { providerID: msg.providerID, modelID: msg.modelID }
+    return { providerID: msg.providerID, modelID: msg.modelID };
   }
-  return msg.model
+  return msg.model;
 }

@@ -11,5 +11,5 @@
     "noUnusedParameters": true,
     "types": ["node"]
   },
-  "include": ["index.ts", "src/**/*.ts"]
+  "include": ["index.ts", "src/**/*.ts", "eslint.config.ts"]
 }

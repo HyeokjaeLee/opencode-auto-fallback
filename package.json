@@ -11,7 +11,12 @@
     "docs"
   ],
   "scripts": {
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint .",
+    "lint:fix": "eslint --fix .",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "check": "tsc --noEmit && eslint . && prettier --check ."
   },
   "keywords": [
     "opencode",
@@ -29,9 +34,16 @@
     "@opencode-ai/plugin": ">=1.0.0"
   },
   "devDependencies": {
+    "@eslint/js": "^10.0.1",
     "@opencode-ai/plugin": "^1.0.0",
     "@types/node": "^22.0.0",
+    "@vitest/eslint-plugin": "^1.6.16",
+    "eslint": "^10.3.0",
+    "eslint-config-prettier": "^10.1.8",
+    "jiti": "^2.6.1",
+    "prettier": "^3.8.3",
     "typescript": "^5.0.0",
+    "typescript-eslint": "^8.59.1",
     "vitest": "^4.1.5"
   }
 }
