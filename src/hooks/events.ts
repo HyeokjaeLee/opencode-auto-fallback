@@ -489,7 +489,7 @@ async function handleSessionStatus(
     await logger.info(`Session status: ${statusType}`, {
       sessionID: props.sessionID,
       phase: phase ?? "none",
-      agent: agent ?? "unknown",
+      ...(agent ? { agent } : {}),
     });
   }
 
