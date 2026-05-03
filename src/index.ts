@@ -1,4 +1,4 @@
-export { createPlugin as AutoFallbackPlugin } from "./src/plugin";
+export { createPlugin as AutoFallbackPlugin } from "@/core/plugin";
 
 export type {
   FallbackConfig,
@@ -10,7 +10,7 @@ export type {
   FallbackDecision,
   ErrorClass,
   LargeContextFallbackConfig,
-} from "./src/types";
+} from "@/config/types";
 
-import { createPlugin } from "./src/plugin";
+import { createPlugin } from "@/core/plugin";
 export default createPlugin;

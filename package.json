@@ -1,12 +1,11 @@
 {
   "name": "opencode-auto-fallback",
-  "version": "0.3.30",
-  "description": "OpenCode plugin that automatically switches to a fallback model when rate limits are hit",
+  "version": "0.4.0",
+  "description": "Advanced fallback plugin for OpenCode agents — model switching, retry with backoff, and context overflow handling",
   "type": "module",
-  "main": "index.ts",
+  "main": "src/index.ts",
   "author": "HyeokjaeLee",
   "files": [
-    "index.ts",
     "src",
     "docs"
   ],

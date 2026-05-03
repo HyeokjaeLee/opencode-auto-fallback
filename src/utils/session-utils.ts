@@ -1,13 +1,13 @@
 import type { PluginInput } from "@opencode-ai/plugin";
-import type { ToastOptions, MessageWithParts, MessageInfo } from "./types";
-import { ABORT_DELAY_MS } from "./constants";
+import type { ToastOptions, MessageWithParts, MessageInfo } from "@/config/types";
+import { ABORT_DELAY_MS } from "@/config/constants";
 import type { createLogger } from "./log";
-import { extractUserParts } from "./message";
-import type { PromptPart } from "./message";
+import { extractUserParts } from "@/core/message";
+import type { PromptPart } from "@/core/message";
 import type { Message as SDKMessage, Part as SDKPart } from "@opencode-ai/sdk";
-import { adaptMessages, getModelFromMessage } from "./adapters/sdk-adapter";
-import { getCurrentModel } from "./state/context-state";
-import { serializeError } from "./utils/error";
+import { adaptMessages, getModelFromMessage } from "@/adapters/sdk-adapter";
+import { getCurrentModel } from "@/state/context-state";
+import { serializeError } from "./error";
 
 /** tui is available at runtime but not typed in the SDK */
 interface ToastClient {

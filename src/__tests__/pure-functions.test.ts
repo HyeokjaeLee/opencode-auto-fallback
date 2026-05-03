@@ -1,17 +1,16 @@
-import { describe, it, expect, afterEach, vi } from "vitest";
-import { parseModel, getFallbackChain, normalizeAgentName } from "../config";
-import { isTransientErrorMessage, isPermanentRateLimitMessage } from "../decision";
-import { hasActiveChildren, shouldSkipLargeContextFallback } from "../large-context";
-import { createMockContext } from "./mocks";
+import { describe, it, expect, afterEach } from "vitest";
+import { parseModel, getFallbackChain, normalizeAgentName } from "@/config/config";
+import { isTransientErrorMessage, isPermanentRateLimitMessage } from "@/core/decision";
+import { shouldSkipLargeContextFallback } from "@/core/large-context";
 import {
   activateCooldown,
   incrementBackoff,
   resetBackoff,
   resetIfExpired,
   removeSession,
-} from "../session-state";
-import { extractUserParts } from "../message";
-import type { FallbackConfig } from "../types";
+} from "@/state/session-state";
+import { extractUserParts } from "@/core/message";
+import type { FallbackConfig } from "@/config/types";
 
 describe("parseModel", () => {
   it("parses 'provider/model'", () => {
@@ -239,72 +238,6 @@ describe("isPermanentRateLimitMessage", () => {
     expect(isPermanentRateLimitMessage("too many requests")).toBe(false);
     expect(isPermanentRateLimitMessage("invalid API key")).toBe(false);
     expect(isPermanentRateLimitMessage("connection timeout")).toBe(false);
-  });
-});
-
-describe("hasActiveChildren", () => {
-  it("returns false when no children", async () => {
-    const ctx = createMockContext({
-      children: vi.fn().mockResolvedValue({ data: [] }),
-    });
-    expect(await hasActiveChildren("s1", ctx)).toBe(false);
-  });
-
-  it("returns false when all children are idle", async () => {
-    const ctx = createMockContext({
-      children: vi.fn().mockResolvedValue({ data: [{ id: "child-1" }] }),
-      status: vi.fn().mockResolvedValue({ data: { "child-1": { type: "idle" } } }),
-    });
-    expect(await hasActiveChildren("s1", ctx)).toBe(false);
-  });
-
-  it("returns true when a child is busy", async () => {
-    const ctx = createMockContext({
-      children: vi.fn().mockResolvedValue({ data: [{ id: "child-1" }] }),
-      status: vi.fn().mockResolvedValue({ data: { "child-1": { type: "busy" } } }),
-    });
-    expect(await hasActiveChildren("s1", ctx)).toBe(true);
-  });
-
-  it("returns true when a child is retrying", async () => {
-    const ctx = createMockContext({
-      children: vi.fn().mockResolvedValue({ data: [{ id: "child-1" }] }),
-      status: vi.fn().mockResolvedValue({ data: { "child-1": { type: "retry" } } }),
-    });
-    expect(await hasActiveChildren("s1", ctx)).toBe(true);
-  });
-
-  it("returns false when child status is unknown (not in status response)", async () => {
-    const ctx = createMockContext({
-      children: vi.fn().mockResolvedValue({ data: [{ id: "child-1" }] }),
-      status: vi.fn().mockResolvedValue({ data: {} }),
-    });
-    expect(await hasActiveChildren("s1", ctx)).toBe(false);
-  });
-
-  it("returns false when children API throws", async () => {
-    const ctx = createMockContext({
-      children: vi.fn().mockRejectedValue(new Error("API error")),
-    });
-    expect(await hasActiveChildren("s1", ctx)).toBe(false);
-  });
-
-  it("returns true if ANY child is busy among multiple", async () => {
-    const ctx = createMockContext({
-      children: vi.fn().mockResolvedValue({ data: [{ id: "c1" }, { id: "c2" }, { id: "c3" }] }),
-      status: vi.fn().mockResolvedValue({
-        data: { c1: { type: "idle" }, c2: { type: "busy" }, c3: { type: "idle" } },
-      }),
-    });
-    expect(await hasActiveChildren("s1", ctx)).toBe(true);
-  });
-
-  it("returns false when all children are idle or unknown", async () => {
-    const ctx = createMockContext({
-      children: vi.fn().mockResolvedValue({ data: [{ id: "c1" }, { id: "c2" }] }),
-      status: vi.fn().mockResolvedValue({ data: { c1: { type: "idle" } } }),
-    });
-    expect(await hasActiveChildren("s1", ctx)).toBe(false);
   });
 });
 

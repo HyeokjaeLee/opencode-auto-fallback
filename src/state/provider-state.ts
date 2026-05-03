@@ -1,4 +1,4 @@
-import { formatModelKey } from "./utils/model";
+import { formatModelKey } from "@/utils/model";
 
 const cooldownExpiry = new Map<string, number>();
 

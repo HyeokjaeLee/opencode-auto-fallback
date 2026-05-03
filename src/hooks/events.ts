@@ -1,15 +1,15 @@
 import type { PluginInput } from "@opencode-ai/plugin";
-import type { FallbackConfig } from "../types";
-import { LARGE_CONTEXT_CONTINUATION } from "../constants";
-import { getParsedLcfModel } from "../config";
+import type { FallbackConfig } from "@/config/types";
+import { LARGE_CONTEXT_CONTINUATION } from "@/config/constants";
+import { getParsedLcfModel } from "@/config/config";
 import {
   classifyError,
   isTransientErrorMessage,
   isPermanentRateLimitMessage,
   isContextOverflowError,
-} from "../decision";
-import { isCooldownActive, resetIfExpired, removeSession } from "../session-state";
-import { isModelInCooldown, cleanupExpired } from "../provider-state";
+} from "@/core/decision";
+import { isCooldownActive, resetIfExpired, removeSession } from "@/state/session-state";
+import { isModelInCooldown, cleanupExpired } from "@/state/provider-state";
 import {
   getCurrentModel,
   getLargeContextPhase,
@@ -22,20 +22,19 @@ import {
   cleanupSession,
   setSessionOriginalAgent,
   getSessionCooldownModel,
-} from "../state/context-state";
-import type { Logger } from "../session-utils";
-import { formatModelKey, isSameModel } from "../utils/model";
-import { serializeError } from "../utils/error";
-import { abortSession, abortSessionSafely, fetchSessionData } from "../session-utils";
-import { handleRetry, handleImmediate } from "../fallback";
+} from "@/state/context-state";
+import type { Logger } from "@/utils/session-utils";
+import { formatModelKey, isSameModel } from "@/utils/model";
+import { serializeError } from "@/utils/error";
+import { abortSession, abortSessionSafely, fetchSessionData } from "@/utils/session-utils";
+import { handleRetry, handleImmediate } from "@/core/fallback";
 import {
   handleLargeContextSwitch,
   handleLargeContextReturn,
   handleLargeContextCompletion,
-  checkContextThreshold,
   shouldSkipLargeContextFallback,
-  hasActiveChildren,
-} from "../large-context";
+} from "@/core/large-context";
+import { checkContextThreshold } from "@/utils/context";
 
 export function createEventHandler(config: FallbackConfig, logger: Logger, context: PluginInput) {
   return async ({ event }: { event: { type: string; properties: unknown } }) => {
@@ -399,14 +398,11 @@ async function handleSessionIdle(
       return;
     }
 
-    const hasChildren = await hasActiveChildren(props.sessionID, context);
-
     // Priority 1: self-compaction if at threshold
     const largeThreshold = await checkContextThreshold(props.sessionID, context, logger);
     if (largeThreshold.atThreshold) {
       await logger.info("Idle: large model context full, self-compacting", {
         sessionID: props.sessionID,
-        hasChildren,
       });
       const lcfParsed = getParsedLcfModel(config);
       if (!lcfParsed) return;
@@ -430,43 +426,36 @@ async function handleSessionIdle(
     }
 
     // Priority 2: return condition
-    if (!hasChildren) {
-      let autoContinuePending = false;
-      try {
-        const msgResp = await context.client.session.messages({
-          path: { id: props.sessionID },
-        });
-        const raw = (msgResp.data ?? []) as Array<{
-          info: { role: string };
-          parts: Array<{ type: string; state?: { status: string } }>;
-        }>;
-        const lastAsst = [...raw].reverse().find((m) => m.info.role === "assistant");
-        if (lastAsst) {
-          autoContinuePending = lastAsst.parts.some(
-            (p) =>
-              p.type === "tool" && (p.state?.status === "pending" || p.state?.status === "running"),
-          );
-        }
-      } catch {
-        /* safe default: assume no auto-continue pending */
-      }
-
-      if (!autoContinuePending) {
-        await logger.info("Idle: return condition met (no children, no pending tools)", {
-          sessionID: props.sessionID,
-        });
-        await handleLargeContextReturn(props.sessionID, context, logger);
-        return;
-      }
-      await logger.info("Idle: return waiting — pending tool calls in last response", {
-        sessionID: props.sessionID,
+    let autoContinuePending = false;
+    try {
+      const msgResp = await context.client.session.messages({
+        path: { id: props.sessionID },
       });
-    } else {
-      await logger.info("Idle: return blocked — active children present", {
-        sessionID: props.sessionID,
-        hasChildren,
-      });
+      const raw = (msgResp.data ?? []) as Array<{
+        info: { role: string };
+        parts: Array<{ type: string; state?: { status: string } }>;
+      }>;
+      const lastAsst = [...raw].reverse().find((m) => m.info.role === "assistant");
+      if (lastAsst) {
+        autoContinuePending = lastAsst.parts.some(
+          (p) =>
+            p.type === "tool" && (p.state?.status === "pending" || p.state?.status === "running"),
+        );
+      }
+    } catch {
+      /* safe default: assume no auto-continue pending */
     }
+
+    if (!autoContinuePending) {
+      await logger.info("Idle: return condition met (no pending tools)", {
+        sessionID: props.sessionID,
+      });
+      await handleLargeContextReturn(props.sessionID, context, logger);
+      return;
+    }
+    await logger.info("Idle: return waiting — pending tool calls in last response", {
+      sessionID: props.sessionID,
+    });
     return;
   }
 

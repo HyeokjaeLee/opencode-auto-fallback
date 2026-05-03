@@ -1,4 +1,4 @@
-import type { SessionState } from "./types";
+import type { SessionState } from "@/config/types";
 
 const sessions = new Map<string, SessionState>();
 

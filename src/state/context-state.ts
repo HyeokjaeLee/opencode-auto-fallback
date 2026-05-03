@@ -1,5 +1,5 @@
-import type { FallbackModel, LargeContextPhase, ResolvedModel } from "../types";
-import { normalizeAgentName } from "../config";
+import type { FallbackModel, LargeContextPhase, ResolvedModel } from "@/config/types";
+import { normalizeAgentName } from "@/config/config";
 
 const activeFallbackParams = new Map<string, FallbackModel>();
 const largeContextSessions = new Map<string, { providerID: string; modelID: string }>();

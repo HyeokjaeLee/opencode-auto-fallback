@@ -11,35 +11,40 @@ OpenCode plugin that intercepts LLM error responses and automatically switches t
 
 ```
 opencode-auto-fallback/
-├── index.ts                  # Public API: exports createPlugin + types
 ├── src/
-│   ├── plugin.ts             # Plugin entry: createPlugin orchestrator + hook factories
-│   ├── fallback.ts           # Error fallback logic: retry, immediate, chain operations
-│   ├── large-context.ts      # Large context management: switch, return, completion, threshold
-│   ├── session-utils.ts      # Shared utilities: toast, abort, fetchSessionData, types
-│   ├── hooks/
-│   │   └── events.ts         # Event handlers: session.error, compacted, idle, status, deleted
-│   ├── types.ts              # All interfaces/types
-│   ├── config.ts             # Config loading, auto-generation, chain resolution
-│   ├── constants.ts          # HTTP status code sets + backoff base + error patterns
-│   ├── decision.ts           # classifyError() — statusCode + isRetryable → immediate | retry | ignore
-│   ├── session-state.ts      # Per-session cooldown + backoff level
-│   ├── provider-state.ts     # Per-model timed cooldown (Map<provider/model, expiry>)
-│   ├── message.ts            # Message extraction from session history
-│   ├── log.ts                # File logging to ~/.local/share/opencode/log/
-│   ├── update-checker.ts     # Auto-update via npm registry
-│   ├── adapters/
-│   │   └── sdk-adapter.ts    # SDK → domain type conversions
+│   ├── index.ts               # Public API: exports createPlugin + types
+│   ├── core/
+│   │   ├── plugin.ts          # Plugin entry: createPlugin orchestrator + hook factories
+│   │   ├── fallback.ts        # Error fallback logic: retry, immediate, chain operations
+│   │   ├── large-context.ts   # Large context management: switch, return, completion, threshold
+│   │   ├── decision.ts        # classifyError() — statusCode + isRetryable → immediate | retry | ignore
+│   │   └── message.ts         # Message extraction from session history
 │   ├── state/
-│   │   └── context-state.ts  # Centralized state: fallback params, model tracking, phase management
+│   │   ├── context-state.ts   # Centralized state: fallback params, model tracking, phase management
+│   │   ├── session-state.ts   # Per-session cooldown + backoff level
+│   │   └── provider-state.ts  # Per-model timed cooldown (Map<provider/model, expiry>)
+│   ├── config/
+│   │   ├── config.ts          # Config loading, auto-generation, chain resolution
+│   │   ├── constants.ts       # HTTP status code sets + backoff base + error patterns
+│   │   └── types.ts           # All interfaces/types
+│   ├── utils/
+│   │   ├── session-utils.ts   # Shared utilities: toast, abort, fetchSessionData, types
+│   │   ├── log.ts             # File logging to ~/.local/share/opencode/log/
+│   │   ├── update-checker.ts  # Auto-update via npm registry
+│   │   ├── model.ts           # Model comparison, limit checking utilities
+│   │   └── error.ts           # Error parsing and formatting utilities
+│   ├── adapters/
+│   │   └── sdk-adapter.ts     # SDK → domain type conversions
+│   ├── hooks/
+│   │   └── events.ts          # Event handlers: session.error, compacted, idle, status, deleted
 │   └── __tests__/
-│       ├── mocks.ts          # createMockContext(), createMockMessages()
-│       ├── plugin.test.ts    # Integration tests (handler functions)
+│       ├── mocks.ts           # createMockContext(), createMockMessages()
+│       ├── plugin.test.ts     # Integration tests (handler functions)
 │       ├── pure-functions.test.ts  # Unit tests for pure functions
 │       ├── error-classification.test.ts  # Comprehensive classifyError tests
 │       └── provider-state.test.ts  # Provider cooldown tests
 ├── docs/
-│   └── fallback.schema.json  # JSON Schema for config validation
+│   └── fallback.schema.json   # JSON Schema for config validation
 ├── .github/workflows/publish.yml  # Auto-publish on version bump
 ├── package.json
 ├── tsconfig.json
@@ -50,44 +55,44 @@ opencode-auto-fallback/
 
 | Task                          | Location                                                        | Notes                                                                              |
 | ----------------------------- | --------------------------------------------------------------- | ---------------------------------------------------------------------------------- |
-| Change classification logic   | `src/decision.ts`                                               | Priority: cooldown → HTTP 401/402/403 → isRetryable → HTTP 429/5xx → default=retry |
-| Change retry/backoff behavior | `src/fallback.ts` handleRetry()                                 | Exponential: 2^n × 2000ms                                                          |
-| Change fallback chain logic   | `src/fallback.ts` tryFallbackChain()                            | Iterates chain, skips cooldown models                                              |
+| Change classification logic   | `src/core/decision.ts`                                          | Priority: cooldown → HTTP 401/402/403 → isRetryable → HTTP 429/5xx → default=retry |
+| Change retry/backoff behavior | `src/core/fallback.ts` handleRetry()                            | Exponential: 2^n × 2000ms                                                          |
+| Change fallback chain logic   | `src/core/fallback.ts` tryFallbackChain()                       | Iterates chain, skips cooldown models                                              |
 | Change error detection        | `src/hooks/events.ts` handleSessionError()                      | Processes session.error, session.status events                                     |
 | Change event handling         | `src/hooks/events.ts`                                           | All event handlers: error, compacted, idle, status, deleted                        |
-| Add config field              | `src/types.ts` → `src/config.ts` → `src/plugin.ts`              | Types first, then loading, then usage                                              |
-| Add fallback model param      | `src/types.ts` FallbackModel + `src/plugin.ts` chat.params hook | Params go through chat.params, not prompt body                                     |
+| Add config field              | `src/config/types.ts` → `src/config/config.ts` → `src/core/plugin.ts` | Types first, then loading, then usage                                              |
+| Add fallback model param      | `src/config/types.ts` FallbackModel + `src/core/plugin.ts` chat.params hook | Params go through chat.params, not prompt body                                     |
 | Add unit test                 | `src/__tests__/pure-functions.test.ts`                          | Import from module directly                                                        |
 | Add integration test          | `src/__tests__/plugin.test.ts`                                  | Use createMockContext() from mocks.ts                                              |
-| Change large context fallback | `src/large-context.ts`                                          | Switch, return, completion, threshold checks                                       |
-| Change hook handlers          | `src/plugin.ts` create\*Handler() factories                     | config, chat.params, compacting, autocontinue hooks                                |
+| Change large context fallback | `src/core/large-context.ts`                                     | Switch, return, completion, threshold checks                                       |
+| Change hook handlers          | `src/core/plugin.ts` create\*Handler() factories                | config, chat.params, compacting, autocontinue hooks                                |
 | Change state management       | `src/state/context-state.ts`                                    | Centralized Maps: fallback params, model tracking, phase management                |
 | Change SDK adapters           | `src/adapters/sdk-adapter.ts`                                   | SDK → domain type conversions with zero `as any`                                   |
-| Change shared utilities       | `src/session-utils.ts`                                          | Toast, abort, fetchSessionData, type aliases                                       |
+| Change shared utilities       | `src/utils/session-utils.ts`                                    | Toast, abort, fetchSessionData, type aliases                                       |
 
 ## CODE MAP
 
 | Symbol                         | Type      | Location                | Role                                                                      |
 | ------------------------------ | --------- | ----------------------- | ------------------------------------------------------------------------- |
-| `createPlugin`                 | function  | plugin.ts               | Plugin entry — returns Hooks object                                       |
-| `classifyError`                | function  | decision.ts             | statusCode + isRetryable → immediate/retry/ignore                         |
-| `handleRetry`                  | function  | fallback.ts             | Abort → backoff → same-model retry → fallback chain                       |
-| `handleImmediate`              | function  | fallback.ts             | Abort → cooldown → fallback chain (no retry)                              |
-| `tryFallbackChain`             | function  | fallback.ts             | Iterates chain, skips cooldown models                                     |
-| `revertAndPrompt`              | function  | fallback.ts             | Revert session + prompt with fallback model                               |
-| `handleLargeContextSwitch`     | function  | large-context.ts        | In-place model switch for large context                                   |
-| `handleLargeContextReturn`     | function  | large-context.ts        | Compaction + switch back to original model                                |
-| `handleLargeContextCompletion` | function  | large-context.ts        | Finalize switch-back, send continuation                                   |
-| `checkContextThreshold`        | function  | large-context.ts        | Check if session is at context limit                                      |
-| `createEventHandler`           | function  | hooks/events.ts         | Factory for all event handlers                                            |
-| `adaptMessages`                | function  | adapters/sdk-adapter.ts | SDK Message/Part → domain MessageWithParts                                |
-| `getFallbackChain`             | function  | config.ts               | Resolves agent-specific or default chain                                  |
-| `loadConfig`                   | function  | config.ts               | Loads from disk, auto-creates if missing                                  |
-| `FallbackConfig`               | interface | types.ts                | enabled, defaultFallback, agentFallbacks, cooldownMs, maxRetries, logging |
-| `FallbackModel`                | interface | types.ts                | providerID, modelID, variant, temperature, topP, etc.                     |
-| `ToastOptions`                 | interface | types.ts                | title, message, variant, duration                                         |
-| `SessionState`                 | interface | types.ts                | fallbackActive, cooldownEndTime, backoffLevel                             |
-| `LargeContextPhase`            | type      | types.ts                | "pending" \| "active" \| "summarizing"                                    |
+| `createPlugin`                 | function  | src/core/plugin.ts      | Plugin entry — returns Hooks object                                       |
+| `classifyError`                | function  | src/core/decision.ts    | statusCode + isRetryable → immediate/retry/ignore                         |
+| `handleRetry`                  | function  | src/core/fallback.ts    | Abort → backoff → same-model retry → fallback chain                       |
+| `handleImmediate`              | function  | src/core/fallback.ts    | Abort → cooldown → fallback chain (no retry)                              |
+| `tryFallbackChain`             | function  | src/core/fallback.ts    | Iterates chain, skips cooldown models                                     |
+| `revertAndPrompt`              | function  | src/core/fallback.ts    | Revert session + prompt with fallback model                               |
+| `handleLargeContextSwitch`     | function  | src/core/large-context.ts | In-place model switch for large context                                   |
+| `handleLargeContextReturn`     | function  | src/core/large-context.ts | Compaction + switch back to original model                                |
+| `handleLargeContextCompletion` | function  | src/core/large-context.ts | Finalize switch-back, send continuation                                   |
+| `checkContextThreshold`        | function  | src/core/large-context.ts | Check if session is at context limit                                      |
+| `createEventHandler`           | function  | src/hooks/events.ts     | Factory for all event handlers                                            |
+| `adaptMessages`                | function  | src/adapters/sdk-adapter.ts | SDK Message/Part → domain MessageWithParts                                |
+| `getFallbackChain`             | function  | src/config/config.ts    | Resolves agent-specific or default chain                                  |
+| `loadConfig`                   | function  | src/config/config.ts    | Loads from disk, auto-creates if missing                                  |
+| `FallbackConfig`               | interface | src/config/types.ts     | enabled, defaultFallback, agentFallbacks, cooldownMs, maxRetries, logging |
+| `FallbackModel`                | interface | src/config/types.ts     | providerID, modelID, variant, temperature, topP, etc.                     |
+| `ToastOptions`                 | interface | src/config/types.ts     | title, message, variant, duration                                         |
+| `SessionState`                 | interface | src/config/types.ts     | fallbackActive, cooldownEndTime, backoffLevel                             |
+| `LargeContextPhase`            | type      | src/config/types.ts     | "pending" \| "active" \| "summarizing"                                    |
 
 ## ERROR CLASSIFICATION PRIORITY
 
@@ -138,11 +143,10 @@ npm version patch --no-git-tag-version  # Bump version (CI handles release)
 
 ## NOTES
 
-- `index.ts` re-exports `createPlugin` as `AutoFallbackPlugin` — downstream imports name it
-- `session-state.ts` and `provider-state.ts` use module-level Maps — state lost on restart
+- `src/index.ts` re-exports `createPlugin` as `AutoFallbackPlugin` — downstream imports name it
+- `src/state/session-state.ts` and `src/state/provider-state.ts` use module-level Maps — state lost on restart
 - Fallback model params (temperature, reasoningEffort, etc.) go through `chat.params` hook, not `session.prompt` body
-- Tests import directly from modules (`fallback.ts`, `large-context.ts`, `session-utils.ts`) — not via `_forTesting`
 - SDK → domain type adapters in `src/adapters/sdk-adapter.ts`: `adaptMessages()`, `getModelFromMessage()`
 - Toast API uses `ClientWithTui` typed interface — `(context.client as ClientWithTui).tui?.showToast()` gracefully degrades if unavailable
-- `session-utils.ts` exports shared types: `Logger`, `ChatMessageInput`, `ClientWithTui`
-- Tests import directly from modules (`fallback.ts`, `large-context.ts`, `session-utils.ts`) — no `_forTesting` indirection
+- `src/utils/session-utils.ts` exports shared types: `Logger`, `ChatMessageInput`, `ClientWithTui`
+- Tests import directly from modules (`src/core/fallback.ts`, `src/core/large-context.ts`, `src/utils/session-utils.ts`) — no `_forTesting` indirection

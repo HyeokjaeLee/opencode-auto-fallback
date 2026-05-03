@@ -5,7 +5,7 @@ import {
   getCooldownExpiry,
   cleanupExpired,
   clearAllCooldowns,
-} from "../provider-state";
+} from "@/state/provider-state";
 
 describe("provider-state timed cooldown", () => {
   afterEach(() => clearAllCooldowns());

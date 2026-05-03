@@ -1,5 +1,5 @@
 import type { Message as SDKMessage, Part as SDKPart } from "@opencode-ai/sdk";
-import type { MessageInfo, MessagePart, MessageWithParts } from "../types";
+import type { MessageInfo, MessagePart, MessageWithParts } from "@/config/types";
 
 function toMessageInfo(msg: SDKMessage): MessageInfo {
   if (msg.role === "assistant") {

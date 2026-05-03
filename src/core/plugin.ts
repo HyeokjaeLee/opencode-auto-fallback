@@ -55,16 +55,16 @@ interface CompactingOutput {
   context: string[];
 }
 
-import type { FallbackConfig } from "./types";
+import type { FallbackConfig } from "@/config/types";
 import {
   TOAST_DURATION_MS,
   TOAST_DURATION_LONG_MS,
   COMPACTION_FALLBACK_TOKEN_LIMIT,
-} from "./constants";
-import { normalizeAgentName, getParsedLcfModel } from "./config";
-import { loadConfig } from "./config";
-import { createLogger } from "./log";
-import { deactivateCooldown } from "./session-state";
+} from "@/config/constants";
+import { normalizeAgentName, getParsedLcfModel } from "@/config/config";
+import { loadConfig } from "@/config/config";
+import { createLogger } from "@/utils/log";
+import { deactivateCooldown } from "@/state/session-state";
 import {
   getAndClearFallbackParams,
   setCurrentModel,
@@ -84,15 +84,15 @@ import {
   getRecoveryModel,
   getCurrentModel,
   setLargeContextPhase,
-} from "./state/context-state";
-import { checkForUpdates, tryInstallUpdate } from "./update-checker";
-import { version as currentVersion } from "../package.json";
-import type { Logger } from "./session-utils";
-import { showToastSafely, abortSessionSafely } from "./session-utils";
-import { formatModelKey, isSameModel } from "./utils/model";
-import { serializeError } from "./utils/error";
-import { checkContextThreshold } from "./large-context";
-import { createEventHandler } from "./hooks/events";
+} from "@/state/context-state";
+import { checkForUpdates, tryInstallUpdate } from "@/utils/update-checker";
+import { version as currentVersion } from "../../package.json";
+import type { Logger } from "@/utils/session-utils";
+import { showToastSafely, abortSessionSafely } from "@/utils/session-utils";
+import { formatModelKey, isSameModel } from "@/utils/model";
+import { serializeError } from "@/utils/error";
+import { checkContextThreshold } from "@/utils/context";
+import { createEventHandler } from "@/hooks/events";
 
 export async function createPlugin(context: PluginInput): Promise<PluginHooks> {
   const config = loadConfig();
