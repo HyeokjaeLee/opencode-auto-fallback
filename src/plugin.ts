@@ -16,6 +16,7 @@ import {
   TOAST_DURATION_MS,
   TOAST_DURATION_LONG_MS,
   COMPACTION_FALLBACK_TOKEN_LIMIT,
+  ABORT_DELAY_MS,
 } from "./constants";
 import { normalizeAgentName, parseModel } from "./config";
 import { loadConfig } from "./config";
@@ -27,8 +28,6 @@ import {
   hasModelChanged,
   getOrSetOriginalModel,
   getLargeContextPhase,
-  deleteLargeContextPhase,
-  deleteRestoreModel,
   setModelContextLimit,
   setModelLimit,
   getModelContextLimit,
@@ -198,14 +197,33 @@ function createChatParamsHandler(
             (input.model.providerID !== lcfParsed.providerID ||
               input.model.id !== lcfParsed.modelID)
           ) {
-            deleteLargeContextPhase(input.sessionID);
-            deleteRestoreModel(input.sessionID);
-            await logger.info("Model changed from large model, phase reset", {
-              sessionID: input.sessionID,
-              fromModel: `${prev.providerID}/${prev.modelID}`,
-              toModel: `${input.model.providerID}/${input.model.id}`,
-              previousPhase: phase,
-            });
+            // Do NOT reset the phase here — that caused an infinite
+            // switch→reset→switch loop (ultrawork continuations revert
+            // the model to the session default, which triggers phase
+            // reset, which re-enables threshold checks on the original
+            // model's limit, which aborts and triggers another switch).
+            // Instead, abort this generation on the wrong model and let
+            // the idle handler manage the return flow naturally.
+            await logger.info(
+              "Model changed from large model, aborting generation",
+              {
+                sessionID: input.sessionID,
+                fromModel: `${prev.providerID}/${prev.modelID}`,
+                toModel: `${input.model.providerID}/${input.model.id}`,
+                phase,
+              },
+            );
+            try {
+              await context.client.session.abort({
+                path: { id: input.sessionID },
+              });
+              await new Promise((resolve) =>
+                setTimeout(resolve, ABORT_DELAY_MS),
+              );
+            } catch {
+              /* session may already be idle */
+            }
+            return;
           }
         }
       }
