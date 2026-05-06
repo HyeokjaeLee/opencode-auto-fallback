@@ -13,7 +13,9 @@ export default tseslint.config(
   {
     languageOptions: {
       parserOptions: {
-        projectService: true,
+        projectService: {
+          allowDefaultProject: ["eslint.config.mjs"],
+        },
         tsconfigRootDir: import.meta.dirname,
       },
     },
@@ -176,7 +178,7 @@ export default tseslint.config(
 
   // ESLint config file itself
   {
-    files: ["eslint.config.ts"],
+    files: ["eslint.config.mjs"],
     rules: {
       "@typescript-eslint/no-explicit-any": "off",
       "@typescript-eslint/explicit-function-return-type": "off",

@@ -1,15 +1,18 @@
 {
   "name": "opencode-auto-fallback",
-  "version": "0.4.2",
+  "version": "0.4.3",
   "description": "Advanced fallback plugin for OpenCode agents — model switching, retry with backoff, and context overflow handling",
   "type": "module",
-  "main": "src/index.ts",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
   "author": "HyeokjaeLee",
   "files": [
-    "src",
+    "dist",
     "docs"
   ],
   "scripts": {
+    "build": "tsup",
+    "prepublishOnly": "tsup",
     "typecheck": "tsc --noEmit",
     "lint": "eslint .",
     "lint:fix": "eslint --fix .",
@@ -44,9 +47,9 @@
     "eslint-config-prettier": "^10.1.8",
     "eslint-import-resolver-typescript": "^4.4.4",
     "eslint-plugin-import-x": "^4.16.2",
-    "jiti": "^2.6.1",
     "prettier": "^3.8.3",
     "prettier-plugin-organize-imports": "^4.3.0",
+    "tsup": "^8.5.1",
     "typescript": "^5.0.0",
     "typescript-eslint": "^8.59.1",
     "vitest": "^4.1.5"
