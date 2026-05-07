@@ -8,10 +8,20 @@
     "enabled": {
       "type": "boolean",
       "description": "Enable or disable the auto-fallback plugin",
+      "default": false
+    },
+    "autoUpdate": {
+      "type": "boolean",
+      "description": "Automatically check for and install plugin updates on startup",
+      "default": false
+    },
+    "autoUpdate": {
+      "type": "boolean",
+      "description": "Automatically check for and install plugin updates on startup",
       "default": true
     },
     "defaultFallback": {
-      "description": "Default fallback model chain. When omitted, only agents explicitly listed in agentFallbacks will trigger fallback.",
+      "description": "Default fallback model chain. Inherited by agents without their own fallback. When omitted, only agents with explicit fallback in the agents map will trigger fallback.",
       "oneOf": [
         {
           "type": "array",
@@ -25,20 +35,25 @@
       ],
       "default": []
     },
-    "agentFallbacks": {
+    "defaultLargeContextModel": {
+      "oneOf": [
+        { "type": "string" },
+        { "type": "boolean", "enum": [false] }
+      ],
+      "description": "Default model to switch to when an agent's context window fills up. Inherited by agents without their own largeContextModel. Set false to disable large context fallback by default.",
+      "default": false
+    },
+    "defaultMinContextRatio": {
+      "type": "number",
+      "description": "Default minimum fractional increase in context window required to trigger large context fallback. Default 0.1 = 10%. Inherited by agents without their own minContextRatio.",
+      "default": 0.1,
+      "minimum": 0
+    },
+    "agents": {
       "type": "object",
-      "description": "Per-agent fallback model chains. Key is agent name, value is fallback chain.",
+      "description": "Per-agent configuration. Key is agent name (matched case-insensitively, whitespace ignored). Fields inherit from top-level defaults when omitted.",
       "additionalProperties": {
-        "oneOf": [
-          {
-            "type": "array",
-            "items": { "$ref": "#/$defs/fallbackEntry" }
-          },
-          {
-            "type": "string",
-            "description": "Single fallback model for this agent"
-          }
-        ]
+        "$ref": "#/$defs/agentConfig"
       },
       "default": {}
     },
@@ -58,33 +73,41 @@
       "type": "boolean",
       "description": "Enable file-based logging to ~/.local/share/opencode/log/fallback.log",
       "default": false
-    },
-    "largeContextFallback": {
-      "type": "object",
-      "description": "Automatically switch to a larger model when an agent's context window fills up. Switches back to the original model after compaction.",
-      "properties": {
-        "agents": {
-          "type": "array",
-          "items": { "type": "string" },
-          "description": "List of agent names to apply large context fallback to",
-          "minItems": 1
-        },
-        "model": {
-          "type": "string",
-          "description": "Model to switch to when context fills up (e.g. 'openai/gpt-5.5')"
-        },
-        "minContextRatio": {
-          "type": "number",
-          "description": "Minimum fractional increase in context window required to trigger fallback. Default 0.1 = 10%. When current model and large model have context windows within this ratio, normal compact proceeds instead.",
-          "default": 0.1,
-          "minimum": 0
-        }
-      },
-      "required": ["agents", "model"],
-      "additionalProperties": false
     }
   },
   "$defs": {
+    "agentConfig": {
+      "type": "object",
+      "description": "Per-agent settings. Omitted fields inherit from top-level defaults.",
+      "properties": {
+        "fallback": {
+          "description": "Agent-specific fallback model chain. Overrides defaultFallback.",
+          "oneOf": [
+            {
+              "type": "array",
+              "items": { "$ref": "#/$defs/fallbackEntry" }
+            },
+            {
+              "type": "string",
+              "description": "Single fallback model for this agent"
+            }
+          ]
+        },
+        "largeContextModel": {
+          "oneOf": [
+            { "type": "string" },
+            { "type": "boolean", "enum": [false] }
+          ],
+          "description": "Model to switch to when this agent's context fills up. Overrides defaultLargeContextModel. Set false to explicitly disable large context fallback for this agent."
+        },
+        "minContextRatio": {
+          "type": "number",
+          "description": "Minimum fractional increase in context window to trigger fallback for this agent. Overrides defaultMinContextRatio.",
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false
+    },
     "fallbackEntry": {
       "oneOf": [
         {
@@ -94,11 +117,15 @@
         {
           "type": "object",
           "description": "Fallback model with optional parameters",
-          "required": ["model"],
+          "required": ["providerID", "modelID"],
           "properties": {
-            "model": {
+            "providerID": {
               "type": "string",
-              "description": "Model reference (e.g. 'openai/gpt-5.4', 'anthropic/claude-sonnet-4')"
+              "description": "Provider identifier (e.g. 'openai', 'anthropic')"
+            },
+            "modelID": {
+              "type": "string",
+              "description": "Model identifier (e.g. 'gpt-5.4', 'claude-sonnet-4')"
             },
             "variant": {
               "type": "string",

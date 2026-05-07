@@ -2,31 +2,40 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
+import { DEFAULT_MIN_CONTEXT_RATIO } from "./constants";
 import type {
-  AgentFallbackMap,
+  AgentConfig,
   FallbackConfig,
   FallbackEntry,
   FallbackModel,
-  FallbackModelConfig,
-  LargeContextFallbackConfig,
-  ModelReference,
   ResolvedModel,
 } from "./types";
 
+interface RawAgentConfig {
+  fallback?: FallbackEntry[];
+  largeContextModel?: string | false;
+  minContextRatio?: number;
+}
+
 interface RawConfig {
   enabled?: boolean;
-  defaultFallback?: ModelReference | FallbackEntry[];
-  agentFallbacks?: Record<string, ModelReference | FallbackEntry[]>;
+  autoUpdate?: boolean;
+  defaultFallback?: FallbackEntry[];
+  defaultLargeContextModel?: string | false;
+  defaultMinContextRatio?: number;
+  agents?: Record<string, RawAgentConfig>;
   cooldownMs?: number;
   maxRetries?: number;
   logging?: boolean;
-  largeContextFallback?: LargeContextFallbackConfig;
 }
 
 const DEFAULT_CONFIG: FallbackConfig = {
-  enabled: true,
+  enabled: false,
+  autoUpdate: false,
   defaultFallback: [],
-  agentFallbacks: {},
+  defaultLargeContextModel: false,
+  defaultMinContextRatio: DEFAULT_MIN_CONTEXT_RATIO,
+  agents: {},
   cooldownMs: 60_000,
   maxRetries: 2,
   logging: false,
@@ -64,7 +73,7 @@ function findConfigFile(): string | null {
   return null;
 }
 
-export function parseModel(model: ModelReference): ResolvedModel {
+export function parseModel(model: string | ResolvedModel): ResolvedModel {
   if (typeof model === "object") {
     return model;
   }
@@ -82,43 +91,6 @@ export function normalizeAgentName(agent: string): string {
   return agent.replace(/[\s\u200B-\u200D\uFEFF]/g, "").toLowerCase();
 }
 
-function entryToFallbackModel(entry: FallbackModel | FallbackModelConfig): FallbackModel {
-  if ("model" in entry) {
-    const parsed = parseModel(entry.model);
-    const { model: _m, variant, reasoningEffort, temperature, topP, maxTokens, thinking } = entry;
-    const result: FallbackModel = { providerID: parsed.providerID, modelID: parsed.modelID };
-    if (variant !== undefined) result.variant = variant;
-    if (reasoningEffort !== undefined) result.reasoningEffort = reasoningEffort;
-    if (temperature !== undefined) result.temperature = temperature;
-    if (topP !== undefined) result.topP = topP;
-    if (maxTokens !== undefined) result.maxTokens = maxTokens;
-    if (thinking !== undefined) result.thinking = thinking;
-    return result;
-  }
-  return entry;
-}
-
-function normalizeChain(raw: ModelReference | FallbackEntry[] | undefined): FallbackEntry[] {
-  if (raw === undefined) return [];
-  if (Array.isArray(raw)) return raw;
-  return [raw];
-}
-
-function normalizeAgentMap(
-  raw: Record<string, ModelReference | FallbackEntry[]> | undefined,
-): AgentFallbackMap {
-  if (!raw) return {};
-  const result: AgentFallbackMap = {};
-  for (const [agent, value] of Object.entries(raw)) {
-    if (Array.isArray(value)) {
-      result[agent] = value;
-    } else {
-      result[agent] = [value];
-    }
-  }
-  return result;
-}
-
 function writeDefaultConfig(configDir: string): string | null {
   try {
     mkdirSync(configDir, { recursive: true });
@@ -127,8 +99,11 @@ function writeDefaultConfig(configDir: string): string | null {
       {
         $schema: SCHEMA_URL,
         enabled: DEFAULT_CONFIG.enabled,
+        autoUpdate: DEFAULT_CONFIG.autoUpdate,
         defaultFallback: DEFAULT_CONFIG.defaultFallback,
-        agentFallbacks: DEFAULT_CONFIG.agentFallbacks,
+        defaultLargeContextModel: DEFAULT_CONFIG.defaultLargeContextModel,
+        defaultMinContextRatio: DEFAULT_CONFIG.defaultMinContextRatio,
+        agents: DEFAULT_CONFIG.agents,
         cooldownMs: DEFAULT_CONFIG.cooldownMs,
         maxRetries: DEFAULT_CONFIG.maxRetries,
         logging: DEFAULT_CONFIG.logging,
@@ -139,7 +114,6 @@ function writeDefaultConfig(configDir: string): string | null {
     writeFileSync(configPath, `${content}\n`, "utf-8");
     return configPath;
   } catch {
-    /* non-critical: best-effort default config write */
     return null;
   }
 }
@@ -154,66 +128,106 @@ export function loadConfig(): FallbackConfig {
 
   try {
     const content = readFileSync(configPath, "utf-8");
-    const userConfig = JSON.parse(content) as RawConfig;
+    const raw = JSON.parse(content) as RawConfig;
+
+    const agents: Record<string, AgentConfig> = {};
+    if (raw.agents) {
+      for (const [name, ac] of Object.entries(raw.agents)) {
+        agents[name] = {
+          fallback: ac.fallback,
+          largeContextModel: ac.largeContextModel,
+          minContextRatio: ac.minContextRatio,
+        };
+      }
+    }
 
     return {
-      enabled: userConfig.enabled ?? DEFAULT_CONFIG.enabled,
-      defaultFallback: normalizeChain(userConfig.defaultFallback),
-      agentFallbacks: normalizeAgentMap(userConfig.agentFallbacks),
-      cooldownMs: userConfig.cooldownMs ?? DEFAULT_CONFIG.cooldownMs,
-      maxRetries: userConfig.maxRetries ?? DEFAULT_CONFIG.maxRetries,
-      logging: userConfig.logging ?? DEFAULT_CONFIG.logging,
-      largeContextFallback: userConfig.largeContextFallback
-        ? {
-            ...userConfig.largeContextFallback,
-            minContextRatio: userConfig.largeContextFallback.minContextRatio ?? 0.1,
-          }
-        : undefined,
+      enabled: raw.enabled ?? DEFAULT_CONFIG.enabled,
+      autoUpdate: raw.autoUpdate ?? DEFAULT_CONFIG.autoUpdate,
+      defaultFallback: raw.defaultFallback ?? DEFAULT_CONFIG.defaultFallback,
+      defaultLargeContextModel: raw.defaultLargeContextModel ?? DEFAULT_CONFIG.defaultLargeContextModel,
+      defaultMinContextRatio: raw.defaultMinContextRatio ?? DEFAULT_CONFIG.defaultMinContextRatio,
+      agents,
+      cooldownMs: raw.cooldownMs ?? DEFAULT_CONFIG.cooldownMs,
+      maxRetries: raw.maxRetries ?? DEFAULT_CONFIG.maxRetries,
+      logging: raw.logging ?? DEFAULT_CONFIG.logging,
     };
   } catch {
-    /* non-critical: malformed config, use defaults */
     return DEFAULT_CONFIG;
   }
+}
+
+function getAgentKey(
+  agents: Record<string, AgentConfig>,
+  agent: string | undefined,
+): string | undefined {
+  if (!agent) return undefined;
+  const normalizedAgent = normalizeAgentName(agent);
+  return Object.keys(agents).find(
+    (configuredAgent) => normalizeAgentName(configuredAgent) === normalizedAgent,
+  );
+}
+
+function resolveEntry(entry: FallbackEntry): FallbackModel {
+  if (typeof entry === "string") {
+    const parsed = parseModel(entry);
+    return { providerID: parsed.providerID, modelID: parsed.modelID };
+  }
+  return entry;
 }
 
 export function getFallbackChain(
   config: FallbackConfig,
   agent: string | undefined,
 ): FallbackModel[] {
-  const fallbackAgent = getFallbackAgent(config.agentFallbacks, agent);
-  const raw = fallbackAgent ? config.agentFallbacks[fallbackAgent] : config.defaultFallback;
+  const agentKey = getAgentKey(config.agents, agent);
+  const raw = agentKey
+    ? config.agents[agentKey].fallback ?? config.defaultFallback
+    : config.defaultFallback;
 
   if (!raw) return [];
 
-  const models: FallbackModel[] = [];
+  return raw.map(resolveEntry);
+}
 
-  for (const entry of raw) {
-    if (typeof entry === "string") {
-      const parsed = parseModel(entry);
-      models.push({ providerID: parsed.providerID, modelID: parsed.modelID });
-    } else if ("model" in entry) {
-      models.push(entryToFallbackModel(entry));
-    } else {
-      models.push(entry);
+export function getAgentLargeContextModel(
+  config: FallbackConfig,
+  agent: string | undefined,
+): ResolvedModel | null {
+  if (agent) {
+    const agentKey = getAgentKey(config.agents, agent);
+    if (agentKey) {
+      const lcm = config.agents[agentKey].largeContextModel;
+      if (lcm === false) return null;
+      if (lcm !== undefined) return parseModel(lcm);
     }
   }
 
-  return models;
+  if (config.defaultLargeContextModel) {
+    return parseModel(config.defaultLargeContextModel);
+  }
+
+  return null;
 }
 
-function getFallbackAgent(
-  agentFallbacks: AgentFallbackMap,
+export function getAgentMinContextRatio(
+  config: FallbackConfig,
   agent: string | undefined,
-): string | undefined {
-  if (!agent) return undefined;
-  const normalizedAgent = normalizeAgentName(agent);
-  return Object.keys(agentFallbacks).find(
-    (configuredAgent) => normalizeAgentName(configuredAgent) === normalizedAgent,
-  );
+): number {
+  if (agent) {
+    const agentKey = getAgentKey(config.agents, agent);
+    if (agentKey && config.agents[agentKey].minContextRatio !== undefined) {
+      return config.agents[agentKey].minContextRatio!;
+    }
+  }
+  return config.defaultMinContextRatio;
 }
 
-export function getParsedLcfModel(config: FallbackConfig): ResolvedModel | null {
-  const lcf = config.largeContextFallback;
-  if (!lcf) return null;
-  return parseModel(lcf.model);
+export function getRegisteredAgentNames(config: FallbackConfig): string[] {
+  return Object.entries(config.agents)
+    .filter(([_, ac]) => {
+      if (ac.largeContextModel === false) return false;
+      return ac.largeContextModel !== undefined || config.defaultLargeContextModel !== undefined;
+    })
+    .map(([name]) => normalizeAgentName(name));
 }

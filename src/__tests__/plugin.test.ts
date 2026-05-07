@@ -13,8 +13,11 @@ import { createMockContext, createMockMessages } from "./mocks";
 function makeConfig(overrides?: Partial<FallbackConfig>): FallbackConfig {
   return {
     enabled: true,
+    autoUpdate: true,
     defaultFallback: ["openai/gpt-5.4"],
-    agentFallbacks: {},
+    defaultLargeContextModel: false,
+    defaultMinContextRatio: 0.1,
+    agents: {},
     cooldownMs: 60_000,
     maxRetries: 2,
     logging: false,

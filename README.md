@@ -5,12 +5,13 @@ OpenCode plugin that automatically detects model errors and switches to a fallba
 ## Features
 
 - **Two-tier classification**: immediate fallback for auth errors, exponential backoff retry for rate limits and transient failures — detected via structured SDK error types, not text matching
-- **Fallback chain**: ordered list of fallback models per agent, with variant/reasoning/temperature support
+- **Unified agent config**: per-agent fallback chains, large context models, and thresholds in a single `agents` map with inheritance
 - **Per-model timed cooldown**: failed models are skipped until cooldown expires
 - **Default‑retry safety net**: any unrecognized error is treated as retryable
 - **Zero config startup**: auto-generates `fallback.json` with sensible defaults on first run
 - **Toast notifications**: terminal toasts when fallback is triggered
 - **Large context fallback**: automatically switches to a larger context model in-place when context fills up, then switches back after compaction with structured context preservation
+- **Auto-update toggle**: optional automatic update checks on startup (disabled by default)
 
 ## Installation
 
@@ -25,98 +26,152 @@ Add `"opencode-auto-fallback"` to the `plugin` array in `~/.config/opencode/open
 }
 ```
 
-### 2. Configuration (optional)
+### 2. Configuration
 
-On first run, a default config is auto-created at `~/.config/opencode/fallback.json`. You can customize it:
+On first run, a default config is auto-created at `~/.config/opencode/fallback.json`. All features are **disabled by default** — set `enabled: true` to activate the plugin.
 
 ```jsonc
 {
   "$schema": "https://raw.githubusercontent.com/HyeokjaeLee/opencode-auto-fallback/main/docs/fallback.schema.json",
   "enabled": true,
+  "autoUpdate": false,
   "defaultFallback": ["anthropic/claude-opus-4-7"],
-  "agentFallbacks": {
-    "reviewer": [
-      "zai-coding-plan/glm-5.1",
-      {
-        "model": "openai/gpt-5.5",
-        "temperature": 0.5,
-        "reasoningEffort": "medium",
-      },
-    ],
+  "defaultLargeContextModel": false,
+  "defaultMinContextRatio": 0.1,
+  "agents": {
+    "reviewer": {
+      "fallback": ["zai-coding-plan/glm-5.1"]
+    },
+    "Sisyphus - Ultraworker": {
+      "fallback": [
+        "opencode-go/deepseek-v4-pro",
+        { "providerID": "openai", "modelID": "gpt-5.5", "temperature": 0.5 }
+      ],
+      "largeContextModel": "google/gemini-2.5-pro",
+      "minContextRatio": 0.15
+    },
+    "explore": {
+      "fallback": ["anthropic/claude-sonnet-4"],
+      "largeContextModel": false
+    }
   },
   "cooldownMs": 60000,
   "maxRetries": 2,
-  "logging": false,
+  "logging": false
 }
 ```
 
-| Field             | Default  | Description                                                                                                                                         |
-| ----------------- | -------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `enabled`         | `true`   | Enable/disable the plugin                                                                                                                           |
-| `defaultFallback` | _(none)_ | Fallback model chain when agent has no specific override. **Optional** — when omitted, only agents listed in `agentFallbacks` will trigger fallback |
-| `agentFallbacks`  | `{}`     | Per-agent fallback chains (`"agentName": ["model", ...]`)                                                                                           |
-| `cooldownMs`      | `60000`  | Cooldown after immediate fallback (prevents rapid re-triggering)                                                                                    |
-| `maxRetries`      | `2`      | Backoff retry attempts before switching to fallback chain                                                                                           |
-| `logging`         | `false`  | Enable file-based logging to `~/.local/share/opencode/log/fallback.log`                                                                             |
+### Field Reference
 
-#### Using with oh-my-openagent
+#### Top-level fields
 
-When an agent is provided by `oh-my-openagent`, the runtime agent name can differ from the key in `oh-my-openagent.json`. Configure fallback with the name that appears in OpenCode session logs, normalized by removing whitespace and ignoring case.
+| Field                      | Type                | Default   | Description                                                                                                                                                  |
+| -------------------------- | ------------------- | --------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `enabled`                  | `boolean`           | `false`   | Enable/disable the plugin. Must be `true` for any behavior to work.                                                                                          |
+| `autoUpdate`               | `boolean`           | `false`   | Automatically check for plugin updates on startup and install them. When `false`, updates must be done manually.                                             |
+| `defaultFallback`          | `FallbackEntry[]`   | `[]`      | Fallback model chain used by agents that don't define their own `fallback`. When empty, only agents with an explicit `fallback` field trigger fallback.      |
+| `defaultLargeContextModel` | `string \| false`   | `false`   | Model to switch to when an agent's context window fills up. Inherited by agents without their own `largeContextModel`. Set `false` to disable by default.    |
+| `defaultMinContextRatio`   | `number`            | `0.1`     | Minimum fractional increase in context window required to trigger large context fallback (default 10%). Inherited by agents without their own value.        |
+| `agents`                   | `Record<string, AgentConfig>` | `{}` | Per-agent configuration. Key is agent name (matched case-insensitively, whitespace ignored). See [Agent Config](#agent-config) below.                        |
+| `cooldownMs`               | `number`            | `60000`   | Cooldown duration in milliseconds after immediate fallback. Prevents rapid re-triggering on the same model.                                                  |
+| `maxRetries`               | `number`            | `2`       | Maximum backoff retry attempts before switching to the fallback chain. Exponential: 2s → 4s → 8s….                                                           |
+| `logging`                  | `boolean`           | `false`   | Enable file-based logging to `~/.local/share/opencode/log/fallback.log`.                                                                                     |
 
-For example, if logs show `agent=Sisyphus - Ultraworker`, configure it as `Sisyphus - Ultraworker` (whitespace is stripped, case is ignored):
+#### Agent Config
+
+Each entry in the `agents` map configures behavior for a specific agent. All fields are optional — omitted fields inherit from the top-level defaults.
+
+| Field               | Type                | Inherited From          | Description                                                                                                         |
+| ------------------- | ------------------- | ----------------------- | ------------------------------------------------------------------------------------------------------------------- |
+| `fallback`          | `FallbackEntry[]`   | `defaultFallback`       | Fallback model chain for this agent. Overrides `defaultFallback` when set.                                          |
+| `largeContextModel` | `string \| false`   | `defaultLargeContextModel` | Model to switch to when this agent's context fills up. Set `false` to explicitly disable even if a default exists. |
+| `minContextRatio`   | `number`            | `defaultMinContextRatio` | Minimum context window increase ratio for this agent. Overrides the default.                                        |
+
+**Inheritance rule**: per-agent field → top-level default → `false`/empty.
+
+#### Fallback Entry
+
+Each entry in a fallback chain can be a simple string or a full object:
 
 ```jsonc
+// Simple — provider/model format
+"openai/gpt-5.5"
+
+// Full — with generation parameters
 {
-  "agentFallbacks": {
-    "Sisyphus - Ultraworker": [
-      {
-        "model": "opencode-go/deepseek-v4-pro",
-        "variant": "high",
-      },
-    ],
-    "hephaestus - deepagent": ["zai-coding-plan/glm-5.1"],
-  },
-  "largeContextFallback": {
-    "agents": ["Sisyphus - Ultraworker", "hephaestus - deepagent"],
-    "model": "opencode-go/deepseek-v4-pro",
-  },
+  "providerID": "openai",
+  "modelID": "gpt-5.5",
+  "variant": "high",
+  "temperature": 0.5,
+  "reasoningEffort": "medium",
+  "maxTokens": 8192,
+  "thinking": { "type": "enabled", "budgetTokens": 4096 }
 }
 ```
 
-Agent matching is exact after normalization: `Sisyphus - Ultraworker` and `sisyphus - ultraworker` match the same entry, but `sisyphus` does not automatically match `Sisyphus - Ultraworker`.
+| Field              | Type     | Description                                          |
+| ------------------ | -------- | ---------------------------------------------------- |
+| `providerID`       | `string` | Provider identifier (e.g. `openai`, `anthropic`)     |
+| `modelID`          | `string` | Model identifier (e.g. `gpt-5.5`, `claude-sonnet-4`) |
+| `variant`          | `string` | Model variant (e.g. `high`, `medium`, `low`)         |
+| `reasoningEffort`  | `string` | `none`, `minimal`, `low`, `medium`, `high`, `xhigh`  |
+| `temperature`      | `number` | Generation temperature (0–2)                         |
+| `topP`             | `number` | Top-p sampling (0–1)                                 |
+| `maxTokens`        | `number` | Maximum output tokens                                |
+| `thinking.type`    | `string` | `enabled` or `disabled`                              |
+| `thinking.budgetTokens` | `number` | Token budget for thinking                       |
+
+### Agent Name Matching
+
+Agent names in the `agents` map are matched **after normalization**: whitespace and zero-width characters are stripped, then lowercased.
+
+```jsonc
+// These all match the same agent:
+"Sisyphus - Ultraworker"  // original display name
+"sisyphus-ultraworker"    // normalized
+
+// This does NOT match — it's a different string:
+"sisyphus"  // won't match "Sisyphus - Ultraworker"
+```
+
+When using agents from `oh-my-openagent`, use the name as it appears in OpenCode session logs.
 
 ### Auto Updates
 
-The plugin checks for updates on every startup and installs them automatically — no manual intervention needed.
+When `autoUpdate: true`, the plugin checks for updates on every startup:
 
 ```
 opencode starts → check npm registry → newer version? → bun/npm update → done
 ```
 
-If the auto-update fails for any reason, a toast notification appears with the manual update command.
+If the update fails, a toast notification appears with the manual update command: `bun update opencode-auto-fallback`.
 
 ### Large Context Fallback
 
-When an agent's context window fills up mid-task, automatically switch to a larger context model in the same session to continue work without losing context. After the work completes, the session compacts and switches back to the original model.
+When a registered agent's context window fills up mid-task, the plugin automatically switches to a larger context model in the same session, continues work, then switches back after compaction.
+
+**Setup**: Set `defaultLargeContextModel` or per-agent `largeContextModel` to a model with a larger context window than the agent's default model.
 
 ```jsonc
 {
-  "largeContextFallback": {
-    "agents": ["sisyphus", "explore"],
-    "model": "openai/gpt-5.5",
-    // Optional: minimum ratio difference required to trigger fallback
-    "minContextRatio": 0.1,
-  },
+  "enabled": true,
+  "defaultLargeContextModel": "openai/gpt-5.5",
+  "agents": {
+    // Inherits defaultLargeContextModel
+    "Sisyphus - Ultraworker": {
+      "fallback": ["opencode-go/deepseek-v4-pro"]
+    },
+    // Uses its own large context model
+    "hephaestus - deepagent": {
+      "largeContextModel": "google/gemini-2.5-pro"
+    },
+    // Explicitly disabled — no large context fallback
+    "explore": {
+      "largeContextModel": false
+    }
+  }
 }
 ```
-
-| Field             | Description                                                                             |
-| ----------------- | --------------------------------------------------------------------------------------- |
-| `agents`          | List of agent names to apply this behavior to                                           |
-| `model`           | Model to switch to when context fills up                                                |
-| `minContextRatio` | Minimum fractional increase in context window to trigger fallback (default `0.1` = 10%) |
-
-The plugin reads context window sizes from the SDK's model metadata automatically (`input.model.limit.context`). When both the current model and the large fallback model have been used in the session, their limits are known and the 10% ratio check is applied. If the large model hasn't been used yet (first compact), its limit is unknown and the fallback proceeds without the ratio check.
 
 **Flow:**
 
@@ -129,6 +184,8 @@ original model working → context full → auto compact triggered
     → session continues with compacted context on original model
 ```
 
+The `defaultMinContextRatio` (default `0.1` = 10%) prevents switching when the large model's context window is barely bigger than the current model's. For example, if the current model has 100K context and the large model has 105K, the 5% increase is below the 10% threshold — normal compaction proceeds instead.
+
 > **Note:** Manual `/compact` commands do **not** trigger large context fallback — only automatic compaction (when context fills up from an assistant response) activates it.
 
 #### Behavior Details
@@ -138,24 +195,6 @@ original model working → context full → auto compact triggered
 - **Self-Compaction**: If the large model itself fills up, the plugin triggers self-compaction on the large model to preserve context.
 - **Switch-Back via Compaction**: When work completes, the session compacts with the original model's context limit as guidance, then switches back.
 - **Cooldown Safety**: If the large context model is in cooldown (e.g., from a previous error), the fallback is skipped and normal compaction proceeds.
-
-#### Fallback Model Entry
-
-Each entry in a fallback chain can be a simple string or an object:
-
-```jsonc
-// Simple
-"openai/gpt-5.5"
-
-// With options
-{
-  "model": "openai/gpt-5.5",
-  "variant": "high",
-  "temperature": 0.5,
-  "reasoningEffort": "medium",
-  "maxTokens": 8192
-}
-```
 
 ## How It Works
 
@@ -209,7 +248,10 @@ bun install
 # Type check
 tsc --noEmit
 
-# Run tests (71 tests)
+# Build (tsup → dist/)
+bun run build
+
+# Run tests (73 tests)
 bun vitest run
 
 # Bump version (CI auto-publishes)

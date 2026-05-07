@@ -1,4 +1,8 @@
-import { getParsedLcfModel, loadConfig, normalizeAgentName } from "@/config/config";
+import {
+  getAgentLargeContextModel,
+  getRegisteredAgentNames,
+  loadConfig,
+} from "@/config/config";
 import {
   COMPACTION_FALLBACK_TOKEN_LIMIT,
   TOAST_DURATION_LONG_MS,
@@ -100,7 +104,7 @@ export async function createPlugin(context: PluginInput): Promise<PluginHooks> {
   await logger.info("Plugin initialized", {
     enabled: config.enabled,
     defaultFallback: config.defaultFallback,
-    agentFallbacks: config.agentFallbacks,
+    agents: Object.keys(config.agents),
     maxRetries: config.maxRetries,
     cooldownMs: config.cooldownMs,
   });
@@ -110,60 +114,64 @@ export async function createPlugin(context: PluginInput): Promise<PluginHooks> {
     return {};
   }
 
-  checkForUpdates(currentVersion)
-    .then(async (info) => {
-      if (!info.hasUpdate) return;
+  if (config.autoUpdate) {
+    checkForUpdates(currentVersion)
+      .then(async (info) => {
+        if (!info.hasUpdate) return;
 
-      await logger.info(`Update available: ${info.current} → ${info.latest}`);
-      await showToastSafely(
-        context,
-        {
-          title: "Updating Plugin",
-          message: `opencode-auto-fallback ${info.current} → ${info.latest}`,
-          variant: "info",
-          duration: TOAST_DURATION_MS,
-        },
-        logger,
-      );
-
-      const ok = await tryInstallUpdate(info.latest);
-      if (ok) {
-        await logger.info(`Updated to ${info.latest}`);
+        await logger.info(`Update available: ${info.current} → ${info.latest}`);
         await showToastSafely(
           context,
           {
-            title: "Plugin Updated",
-            message: `opencode-auto-fallback updated to ${info.latest}`,
-            variant: "success",
+            title: "Updating Plugin",
+            message: `opencode-auto-fallback ${info.current} → ${info.latest}`,
+            variant: "info",
             duration: TOAST_DURATION_MS,
           },
           logger,
         );
-      } else {
-        await logger.warn("Auto-update failed");
-        await showToastSafely(
-          context,
-          {
-            title: "Update Failed",
-            message: `Could not auto-update. Run manually: bun update opencode-auto-fallback`,
-            variant: "warning",
-            duration: TOAST_DURATION_LONG_MS,
-          },
-          logger,
-        );
-      }
-    })
-    .catch(async (err) => {
-      await logger.warn("Update check failed", {
-        error: serializeError(err),
+
+        const ok = await tryInstallUpdate(info.latest);
+        if (ok) {
+          await logger.info(`Updated to ${info.latest}`);
+          await showToastSafely(
+            context,
+            {
+              title: "Plugin Updated",
+              message: `opencode-auto-fallback updated to ${info.latest}`,
+              variant: "success",
+              duration: TOAST_DURATION_MS,
+            },
+            logger,
+          );
+        } else {
+          await logger.warn("Auto-update failed");
+          await showToastSafely(
+            context,
+            {
+              title: "Update Failed",
+              message: `Could not auto-update. Run manually: bun update opencode-auto-fallback`,
+              variant: "warning",
+              duration: TOAST_DURATION_LONG_MS,
+            },
+            logger,
+          );
+        }
+      })
+      .catch(async (err) => {
+        await logger.warn("Update check failed", {
+          error: serializeError(err),
+        });
       });
-    });
+  }
 
   return {
     config: async (input) => {
-      const lcf = config.largeContextFallback;
-      if (!lcf) return;
-      setRegisteredAgents(lcf.agents.map((a) => normalizeAgentName(a)));
+      const registeredNames = getRegisteredAgentNames(config);
+      if (registeredNames.length === 0) return;
+
+      setRegisteredAgents(registeredNames);
+
       const existingCompaction = (input as Record<string, unknown>).compaction as
         | { reserved?: number; auto?: boolean }
         | undefined;
@@ -179,8 +187,7 @@ export async function createPlugin(context: PluginInput): Promise<PluginHooks> {
       await logger.info(
         "Config: auto-compaction globally disabled (SDK limitation: no per-agent setting)",
         {
-          agents: lcf.agents,
-          largeModel: lcf.model,
+          registeredAgents: registeredNames,
         },
       );
     },
@@ -227,34 +234,29 @@ function createChatParamsHandler(
           previousModel: prev ? formatModelKey(prev) : "none",
         });
 
-        const lcf = config.largeContextFallback;
-        if (lcf && prev) {
-          const lcfParsed = getParsedLcfModel(config);
-          const phase = getLargeContextPhase(input.sessionID);
-          if (
-            lcfParsed &&
-            (phase === "active" || phase === "pending") &&
-            isSameModel(prev, lcfParsed) &&
-            !isSameModel({ providerID: input.model.providerID, modelID: input.model.id }, lcfParsed)
-          ) {
-            // Do NOT reset the phase here — that caused an infinite
-            // switch→reset→switch loop (ultrawork continuations revert
-            // the model to the session default, which triggers phase
-            // reset, which re-enables threshold checks on the original
-            // model's limit, which aborts and triggers another switch).
-            // Instead, abort this generation on the wrong model and let
-            // the idle handler manage the return flow naturally.
-            await logger.info("Model changed from large model, aborting generation", {
-              sessionID: input.sessionID,
-              fromModel: formatModelKey(prev),
-              toModel: formatModelKey({
-                providerID: input.model.providerID,
-                modelID: input.model.id,
-              }),
-              phase,
-            });
-            await abortSessionSafely(input.sessionID, context);
-            return;
+        if (prev) {
+          const agent = getSessionOriginalAgent(input.sessionID) ?? input.agent;
+          if (agent && isRegisteredAgent(agent)) {
+            const lcfParsed = getAgentLargeContextModel(config, agent);
+            const phase = getLargeContextPhase(input.sessionID);
+            if (
+              lcfParsed &&
+              (phase === "active" || phase === "pending") &&
+              isSameModel(prev, lcfParsed) &&
+              !isSameModel({ providerID: input.model.providerID, modelID: input.model.id }, lcfParsed)
+            ) {
+              await logger.info("Model changed from large model, aborting generation", {
+                sessionID: input.sessionID,
+                fromModel: formatModelKey(prev),
+                toModel: formatModelKey({
+                  providerID: input.model.providerID,
+                  modelID: input.model.id,
+                }),
+                phase,
+              });
+              await abortSessionSafely(input.sessionID, context);
+              return;
+            }
           }
         }
       }
@@ -284,10 +286,9 @@ function createChatParamsHandler(
         }
       }
 
-      // Pre-fetch large context fallback model limit
-      const lcf = config.largeContextFallback;
-      if (lcf) {
-        const lcfParsed = getParsedLcfModel(config);
+      const agent = getSessionOriginalAgent(input.sessionID) ?? input.agent;
+      if (agent && isRegisteredAgent(agent)) {
+        const lcfParsed = getAgentLargeContextModel(config, agent);
         if (lcfParsed) {
           const lcfKey = formatModelKey(lcfParsed);
           if (
@@ -309,10 +310,8 @@ function createChatParamsHandler(
       }
     }
 
-    // Pre-generation context threshold check
     if (!getLargeContextPhase(input.sessionID)) {
-      const lcf = config.largeContextFallback;
-      if (lcf && input.agent && isRegisteredAgent(input.agent)) {
+      if (input.agent && isRegisteredAgent(input.agent)) {
         const threshold = await checkContextThreshold(input.sessionID, context, logger);
         if (threshold.atThreshold) {
           await logger.info("Pre-generation threshold exceeded, aborting", {
@@ -357,7 +356,6 @@ function createCompactingHandler(
   return async (input: CompactingInput, output: CompactingOutput): Promise<void> => {
     const phase = getLargeContextPhase(input.sessionID);
 
-    // Summarizing for switch-back
     if (phase === "summarizing") {
       const original = getRecoveryModel(input.sessionID);
       if (original) {
@@ -376,7 +374,6 @@ function createCompactingHandler(
       return;
     }
 
-    // Active phase: self-compaction or manual /compact
     if (phase === "active") {
       const target = getAndClearCompactionTarget(input.sessionID);
       if (target === "large") {
@@ -411,7 +408,6 @@ function createCompactingHandler(
       return;
     }
 
-    // Non-registered agent — use default
     const agent = getSessionOriginalAgent(input.sessionID);
     if (agent && !isRegisteredAgent(agent)) {
       await logger.info("Compacting: non-registered agent, using default", {

@@ -60,3 +60,6 @@ export const LARGE_CONTEXT_CONTINUATION = "Continue from where you left off.";
 export const RETURN_CONTINUATION = "Continue from where you left off.";
 
 export const COMPACTION_FALLBACK_TOKEN_LIMIT = 30_000;
+
+/** Default minimum fractional increase in context window required to trigger large context fallback */
+export const DEFAULT_MIN_CONTEXT_RATIO = 0.1;

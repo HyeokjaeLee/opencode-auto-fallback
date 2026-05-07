@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it } from "vitest";
 
 import { getFallbackChain, normalizeAgentName, parseModel } from "@/config/config";
+import { DEFAULT_MIN_CONTEXT_RATIO } from "@/config/constants";
 import type { FallbackConfig } from "@/config/types";
 import { isPermanentRateLimitMessage, isTransientErrorMessage } from "@/core/decision";
 import { shouldSkipLargeContextFallback } from "@/core/large-context";
@@ -31,13 +32,18 @@ describe("parseModel", () => {
 describe("getFallbackChain", () => {
   const config: FallbackConfig = {
     enabled: true,
+    autoUpdate: true,
     defaultFallback: ["anthropic/claude-opus-4-5"],
-    agentFallbacks: {
-      build: ["anthropic/claude-sonnet-4"],
-      oracle: [
-        { providerID: "openai", modelID: "gpt-5.5" },
-        { providerID: "zai-coding-plan", modelID: "glm-5.1", variant: "high" },
-      ],
+    defaultLargeContextModel: false,
+    defaultMinContextRatio: DEFAULT_MIN_CONTEXT_RATIO,
+    agents: {
+      build: { fallback: ["anthropic/claude-sonnet-4"] },
+      oracle: {
+        fallback: [
+          { providerID: "openai", modelID: "gpt-5.5" },
+          { providerID: "zai-coding-plan", modelID: "glm-5.1", variant: "high" },
+        ],
+      },
     },
     cooldownMs: 300000,
     maxRetries: 3,
@@ -69,18 +75,20 @@ describe("getFallbackChain", () => {
   it("preserves new FallbackModel fields", () => {
     const configWithParams: FallbackConfig = {
       ...config,
-      agentFallbacks: {
-        oracle: [
-          {
-            providerID: "anthropic",
-            modelID: "claude-sonnet-4",
-            reasoningEffort: "high",
-            temperature: 0.5,
-            topP: 0.9,
-            maxTokens: 8192,
-            thinking: { type: "enabled", budgetTokens: 4096 },
-          },
-        ],
+      agents: {
+        oracle: {
+          fallback: [
+            {
+              providerID: "anthropic",
+              modelID: "claude-sonnet-4",
+              reasoningEffort: "high",
+              temperature: 0.5,
+              topP: 0.9,
+              maxTokens: 8192,
+              thinking: { type: "enabled", budgetTokens: 4096 },
+            },
+          ],
+        },
       },
     };
     const chain = getFallbackChain(configWithParams, "oracle");
@@ -94,26 +102,11 @@ describe("getFallbackChain", () => {
       thinking: { type: "enabled", budgetTokens: 4096 },
     });
   });
-  it("parses { model: 'provider/model' } shorthand", () => {
-    const configShort: FallbackConfig = {
-      ...config,
-      agentFallbacks: {
-        build: [{ model: "openai/gpt-5.5", variant: "high", temperature: 0.7 }],
-      },
-    };
-    const chain = getFallbackChain(configShort, "build");
-    expect(chain[0]).toEqual({
-      providerID: "openai",
-      modelID: "gpt-5.5",
-      variant: "high",
-      temperature: 0.7,
-    });
-  });
-  it("matches agentFallbacks case-insensitively and ignores whitespace", () => {
+  it("matches agents case-insensitively and ignores whitespace", () => {
     const configWithDisplayName: FallbackConfig = {
       ...config,
-      agentFallbacks: {
-        "sisyphus-ultraworker": ["opencode-go/deepseek-v4-pro"],
+      agents: {
+        "sisyphus-ultraworker": { fallback: ["opencode-go/deepseek-v4-pro"] },
       },
     };
     expect(getFallbackChain(configWithDisplayName, "​Sisyphus - Ultraworker")).toEqual([

@@ -1,6 +1,5 @@
-import { parseModel } from "@/config/config";
 import { LARGE_CONTEXT_CONTINUATION, RETURN_CONTINUATION } from "@/config/constants";
-import type { FallbackConfig } from "@/config/types";
+import type { ResolvedModel } from "@/config/types";
 import {
   clearActiveFallbackParams,
   deleteLargeContextPhase,
@@ -33,7 +32,7 @@ export function shouldSkipLargeContextFallback(
 
 export async function handleLargeContextSwitch(
   sessionID: string,
-  lcf: NonNullable<FallbackConfig["largeContextFallback"]>,
+  largeModel: ResolvedModel,
   context: PluginInput,
   logger: Logger,
   errorMessage: string,
@@ -44,8 +43,7 @@ export async function handleLargeContextSwitch(
   const agent = getSessionOriginalAgent(sessionID);
   if (!agent || !isRegisteredAgent(agent)) return false;
 
-  const parsed = parseModel(lcf.model);
-  if (isModelInCooldown(parsed.providerID, parsed.modelID)) return false;
+  if (isModelInCooldown(largeModel.providerID, largeModel.modelID)) return false;
 
   setLargeContextPhase(sessionID, "pending");
 
@@ -65,7 +63,7 @@ export async function handleLargeContextSwitch(
     await logger.info("Switching to large context model", {
       sessionID,
       agent,
-      largeModel: lcf.model,
+      largeModel: formatModelKey(largeModel),
       fromModel: formatModelKey(original),
       reason: errorMessage,
     });
@@ -76,8 +74,8 @@ export async function handleLargeContextSwitch(
     }
 
     setActiveFallbackParams(sessionID, {
-      providerID: parsed.providerID,
-      modelID: parsed.modelID,
+      providerID: largeModel.providerID,
+      modelID: largeModel.modelID,
     });
 
     setLargeContextPhase(sessionID, "active");
@@ -86,7 +84,7 @@ export async function handleLargeContextSwitch(
       .prompt({
         path: { id: sessionID },
         body: {
-          model: { providerID: parsed.providerID, modelID: parsed.modelID },
+          model: { providerID: largeModel.providerID, modelID: largeModel.modelID },
           agent,
           parts: [{ type: "text" as const, text: LARGE_CONTEXT_CONTINUATION }],
         },
@@ -105,7 +103,7 @@ export async function handleLargeContextSwitch(
     deleteRestoreModel(sessionID);
     await logger.error("Failed to switch to large context model", {
       sessionID,
-      largeModel: lcf.model,
+      largeModel: formatModelKey(largeModel),
       error: serializeError(err),
     });
     return false;

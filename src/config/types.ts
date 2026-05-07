@@ -15,32 +15,7 @@ export interface FallbackModel extends ResolvedModel {
   };
 }
 
-export interface FallbackModelConfig {
-  model: string;
-  variant?: string;
-  reasoningEffort?: "none" | "minimal" | "low" | "medium" | "high" | "xhigh";
-  temperature?: number;
-  topP?: number;
-  maxTokens?: number;
-  thinking?: {
-    type: "enabled" | "disabled";
-    budgetTokens?: number;
-  };
-}
-
-export type ModelReference = string | ResolvedModel;
-
-export interface LargeContextFallbackConfig {
-  agents: string[];
-  model: string;
-  /** Maps "provider/model" to context window token limit. Used to skip fallback when window sizes are too similar. */
-  /** Minimum fractional increase in context window required to trigger fallback (default 0.1 = 10%) */
-  minContextRatio?: number;
-}
-
-export type FallbackEntry = string | FallbackModel | FallbackModelConfig;
-
-export type AgentFallbackMap = Record<string, FallbackEntry[]>;
+export type FallbackEntry = string | FallbackModel;
 
 export type ErrorClass = "immediate" | "retry" | "ignore";
 
@@ -50,14 +25,23 @@ export interface FallbackDecision {
   isRetryable?: boolean;
 }
 
+export interface AgentConfig {
+  fallback?: FallbackEntry[];
+  /** Model to switch to when context fills up. false = explicitly disabled, undefined = inherit defaultLargeContextModel. */
+  largeContextModel?: string | false;
+  minContextRatio?: number;
+}
+
 export interface FallbackConfig {
   enabled: boolean;
+  autoUpdate: boolean;
   defaultFallback?: FallbackEntry[];
-  agentFallbacks: AgentFallbackMap;
+  defaultLargeContextModel: string | false;
+  defaultMinContextRatio: number;
+  agents: Record<string, AgentConfig>;
   cooldownMs: number;
   maxRetries: number;
   logging: boolean;
-  largeContextFallback?: LargeContextFallbackConfig;
 }
 
 export interface SessionState {

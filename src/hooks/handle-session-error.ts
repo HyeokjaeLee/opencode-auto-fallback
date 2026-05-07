@@ -1,4 +1,4 @@
-import { getParsedLcfModel } from "@/config/config";
+import { getAgentLargeContextModel } from "@/config/config";
 import type { FallbackConfig } from "@/config/types";
 import { classifyError, isContextOverflowError } from "@/core/decision";
 import { handleRetry, handleImmediate } from "@/core/fallback";
@@ -56,65 +56,60 @@ export async function handleSessionError(
     return;
   }
 
-  // Context overflow detection
   if (err.data.message && isContextOverflowError(err.data.message)) {
-    const lcf = config.largeContextFallback;
-    if (lcf) {
+    const agent = getSessionOriginalAgent(sessionID);
+    const parsedModel = agent ? getAgentLargeContextModel(config, agent) : null;
+
+    if (parsedModel && agent && isRegisteredAgent(agent)) {
       await abortSessionSafely(sessionID, context);
 
       const phase = getLargeContextPhase(sessionID);
-      const agent = getSessionOriginalAgent(sessionID);
 
       if (phase === "active") {
-        const lcfParsed = getParsedLcfModel(config);
-        if (!lcfParsed) return;
         setCompactionTarget(sessionID, "large");
         try {
           await context.client.session.summarize({
             path: { id: sessionID },
             body: {
-              providerID: lcfParsed.providerID,
-              modelID: lcfParsed.modelID,
+              providerID: parsedModel.providerID,
+              modelID: parsedModel.modelID,
             },
           });
         } catch {
-          /* non-critical: summarize may fail if session aborted mid-call */
           clearCompactionTarget(sessionID);
         }
         return;
       }
 
-      if (agent && isRegisteredAgent(agent)) {
-        const switched = await handleLargeContextSwitch(
-          sessionID,
-          lcf,
-          context,
-          logger,
-          err.data.message,
-        );
-        if (switched) return;
-      } else {
-        const curModel = getCurrentModel(sessionID);
-        await logger.info("Error: context overflow for non-registered agent, manual compact", {
-          sessionID,
+      const switched = await handleLargeContextSwitch(
+        sessionID,
+        parsedModel,
+        context,
+        logger,
+        err.data.message,
+      );
+      if (switched) return;
+    } else {
+      const curModel = getCurrentModel(sessionID);
+      await logger.info("Error: context overflow for non-registered agent, manual compact", {
+        sessionID,
+      });
+      try {
+        await context.client.session.summarize({
+          path: { id: sessionID },
+          ...(curModel
+            ? {
+                body: {
+                  providerID: curModel.providerID,
+                  modelID: curModel.modelID,
+                },
+              }
+            : {}),
         });
-        try {
-          await context.client.session.summarize({
-            path: { id: sessionID },
-            ...(curModel
-              ? {
-                  body: {
-                    providerID: curModel.providerID,
-                    modelID: curModel.modelID,
-                  },
-                }
-              : {}),
-          });
-        } catch {
-          /* fall through to normal error handling */
-        }
-        return;
+      } catch {
+        /* fall through to normal error handling */
       }
+      return;
     }
   }
 
@@ -133,7 +128,6 @@ export async function handleSessionError(
     message: err.data.message,
   });
 
-  // Model-aware cooldown
   const cooldownActive = isCooldownActive(sessionID);
   if (cooldownActive) {
     const currentModel = getCurrentModel(sessionID);
