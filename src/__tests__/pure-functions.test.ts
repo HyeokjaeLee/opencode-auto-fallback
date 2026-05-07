@@ -40,8 +40,8 @@ describe("getFallbackChain", () => {
       build: { fallback: ["anthropic/claude-sonnet-4"] },
       oracle: {
         fallback: [
-          { providerID: "openai", modelID: "gpt-5.5" },
-          { providerID: "zai-coding-plan", modelID: "glm-5.1", variant: "high" },
+          "openai/gpt-5.5",
+          { "model": "zai-coding-plan/glm-5.1", "variant": "high" },
         ],
       },
     },
@@ -79,8 +79,7 @@ describe("getFallbackChain", () => {
         oracle: {
           fallback: [
             {
-              providerID: "anthropic",
-              modelID: "claude-sonnet-4",
+              model: "anthropic/claude-sonnet-4",
               reasoningEffort: "high",
               temperature: 0.5,
               topP: 0.9,

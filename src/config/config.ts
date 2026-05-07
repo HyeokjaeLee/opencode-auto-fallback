@@ -173,7 +173,15 @@ function resolveEntry(entry: FallbackEntry): FallbackModel {
     const parsed = parseModel(entry);
     return { providerID: parsed.providerID, modelID: parsed.modelID };
   }
-  return entry;
+  const parsed = parseModel(entry.model);
+  const result: FallbackModel = { providerID: parsed.providerID, modelID: parsed.modelID };
+  if (entry.variant !== undefined) result.variant = entry.variant;
+  if (entry.reasoningEffort !== undefined) result.reasoningEffort = entry.reasoningEffort;
+  if (entry.temperature !== undefined) result.temperature = entry.temperature;
+  if (entry.topP !== undefined) result.topP = entry.topP;
+  if (entry.maxTokens !== undefined) result.maxTokens = entry.maxTokens;
+  if (entry.thinking !== undefined) result.thinking = entry.thinking;
+  return result;
 }
 
 export function getFallbackChain(

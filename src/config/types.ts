@@ -15,7 +15,20 @@ export interface FallbackModel extends ResolvedModel {
   };
 }
 
-export type FallbackEntry = string | FallbackModel;
+export interface FallbackModelEntry {
+  model: string;
+  variant?: string;
+  reasoningEffort?: "none" | "minimal" | "low" | "medium" | "high" | "xhigh";
+  temperature?: number;
+  topP?: number;
+  maxTokens?: number;
+  thinking?: {
+    type: "enabled" | "disabled";
+    budgetTokens?: number;
+  };
+}
+
+export type FallbackEntry = string | FallbackModelEntry;
 
 export type ErrorClass = "immediate" | "retry" | "ignore";
 

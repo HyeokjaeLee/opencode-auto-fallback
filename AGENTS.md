@@ -42,7 +42,7 @@ Runtime state using module-level Maps. `context-state.ts` is the central hub: fa
 
 ### src/hooks/
 
-Event handlers. `events.ts` routes events by type to individual handlers: `handle-session-idle.ts` (threshold checks, large context switch/return), `handle-session-error.ts` (context overflow, error classification), `handle-session-status.ts` (rate limit detection, cooldown cleanup), `handle-session-compacted.ts` (continuation prompts), `handle-session-deleted.ts` (session cleanup).
+Event handlers. `events.ts` routes events by type to individual handlers: `handle-session-idle.ts` (large context switch/return at 100% context), `handle-session-error.ts` (context overflow, error classification, primary large context trigger), `handle-session-status.ts` (rate limit detection, cooldown cleanup), `handle-session-compacted.ts` (continuation prompts), `handle-session-deleted.ts` (session cleanup).
 
 ### src/utils/
 
@@ -86,6 +86,7 @@ Setting `largeContextModel: false` explicitly opts out even if a default exists.
 - Status code heuristics are used only when `isRetryable` is `undefined`
 - SDK → domain type adapters bridge the gap between SDK types and our simplified domain types
 - Large context management uses in-place model switching — `handleLargeContextSwitch` takes a `ResolvedModel`, not a config object
+- Large context switch triggers at 100% context usage: error handler is primary trigger, idle handler is safety net
 - Per-agent config resolved via `getAgent*` functions with inheritance fallback to defaults
 - `plugin.ts` is a thin orchestrator — business logic lives in `fallback.ts`, `large-context.ts`, and individual hook handlers
 - Hook handlers are factory functions that capture config/logger/context in closure
@@ -127,5 +128,5 @@ npm version patch --no-git-tag-version  # Bump version (CI handles release)
 - Toast API uses `ClientWithTui` typed interface — `(context.client as ClientWithTui).tui?.showToast()` gracefully degrades if unavailable
 - `src/utils/session-utils.ts` exports shared types: `Logger`, `ChatMessageInput`, `ClientWithTui`
 - Tests import directly from modules (`src/core/fallback.ts`, `src/core/large-context.ts`, `src/utils/session-utils.ts`) — no `_forTesting` indirection
-- `FallbackEntry` is `string | FallbackModel` — no more `{ "model": "..." }` shorthand, use `"provider/model"` string or `{ providerID, modelID }` object
+- `FallbackEntry` is `string | FallbackModelEntry` — string `"provider/model"` or `{ "model": "provider/model", "variant": "high" }` object
 - `autoUpdate` defaults to `false` — users must opt in

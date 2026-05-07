@@ -45,7 +45,7 @@ On first run, a default config is auto-created at `~/.config/opencode/fallback.j
     "Sisyphus - Ultraworker": {
       "fallback": [
         "opencode-go/deepseek-v4-pro",
-        { "providerID": "openai", "modelID": "gpt-5.5", "temperature": 0.5 }
+        { "model": "openai/gpt-5.5", "temperature": 0.5 }
       ],
       "largeContextModel": "google/gemini-2.5-pro",
       "minContextRatio": 0.15
@@ -91,16 +91,15 @@ Each entry in the `agents` map configures behavior for a specific agent. All fie
 
 #### Fallback Entry
 
-Each entry in a fallback chain can be a simple string or a full object:
+Each entry in a fallback chain can be a simple string or an object with `model` key:
 
 ```jsonc
 // Simple — provider/model format
 "openai/gpt-5.5"
 
-// Full — with generation parameters
+// With parameters — uses same "model" key
 {
-  "providerID": "openai",
-  "modelID": "gpt-5.5",
+  "model": "openai/gpt-5.5",
   "variant": "high",
   "temperature": 0.5,
   "reasoningEffort": "medium",
@@ -111,8 +110,7 @@ Each entry in a fallback chain can be a simple string or a full object:
 
 | Field              | Type     | Description                                          |
 | ------------------ | -------- | ---------------------------------------------------- |
-| `providerID`       | `string` | Provider identifier (e.g. `openai`, `anthropic`)     |
-| `modelID`          | `string` | Model identifier (e.g. `gpt-5.5`, `claude-sonnet-4`) |
+| `model`            | `string` | Provider/model identifier (e.g. `openai/gpt-5.5`)   |
 | `variant`          | `string` | Model variant (e.g. `high`, `medium`, `low`)         |
 | `reasoningEffort`  | `string` | `none`, `minimal`, `low`, `medium`, `high`, `xhigh`  |
 | `temperature`      | `number` | Generation temperature (0–2)                         |
@@ -148,7 +146,7 @@ If the update fails, a toast notification appears with the manual update command
 
 ### Large Context Fallback
 
-When a registered agent's context window fills up mid-task, the plugin automatically switches to a larger context model in the same session, continues work, then switches back after compaction.
+When a registered agent's context window fills up mid-task, the plugin automatically switches to a larger context model in the same session, continues work, then switches back after compaction. The switch triggers at **100% context usage** — the error handler catches the context overflow and switches immediately. The idle handler also checks at 100% as a safety net.
 
 **Setup**: Set `defaultLargeContextModel` or per-agent `largeContextModel` to a model with a larger context window than the agent's default model.
 
@@ -184,7 +182,7 @@ original model working → context full → auto compact triggered
     → session continues with compacted context on original model
 ```
 
-The `defaultMinContextRatio` (default `0.1` = 10%) prevents switching when the large model's context window is barely bigger than the current model's. For example, if the current model has 100K context and the large model has 105K, the 5% increase is below the 10% threshold — normal compaction proceeds instead.
+The `defaultMinContextRatio` (default `0.1` = 10%) prevents switching when the large model's context window is barely bigger than the current model's. For example, if the current model has 100K context and the large model has 105K, the 5% increase is below the 10% threshold — the overflow error is handled normally instead of switching models.
 
 > **Note:** Manual `/compact` commands do **not** trigger large context fallback — only automatic compaction (when context fills up from an assistant response) activates it.
 

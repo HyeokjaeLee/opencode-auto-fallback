@@ -7,6 +7,7 @@ export type {
   FallbackDecision,
   FallbackEntry,
   FallbackModel,
+  FallbackModelEntry,
   ResolvedModel,
 } from "@/config/types";
 
