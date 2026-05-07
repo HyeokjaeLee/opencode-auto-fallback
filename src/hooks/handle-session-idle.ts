@@ -65,16 +65,15 @@ export async function handleSessionIdle(
   }
 
   if (!phase) {
-    if (!agent) return;
+    if (!agent || !isRegisteredAgent(agent)) return;
 
     const parsedModel = getAgentLargeContextModel(config, agent);
     if (!parsedModel) return;
-    if (!isRegisteredAgent(agent)) return;
 
     const thresholdResult = await checkContextThreshold(props.sessionID, context, logger);
-    if (!thresholdResult.atThreshold) return;
+    if (thresholdResult.usage < thresholdResult.limit) return;
 
-    await logger.info("Idle: registered agent at threshold, checking guards", {
+    await logger.info("Idle: context at limit, switching to large model", {
       sessionID: props.sessionID,
       agent,
       usage: thresholdResult.usage,
@@ -83,47 +82,20 @@ export async function handleSessionIdle(
 
     const curModel = getCurrentModel(props.sessionID);
     if (curModel) {
-      if (isSameModel(curModel, parsedModel)) {
-        await logger.info("Idle: guard — already on large model", {
-          sessionID: props.sessionID,
-          model: formatModelKey(curModel),
-        });
-        return;
-      }
-      if (isModelInCooldown(parsedModel.providerID, parsedModel.modelID)) {
-        await logger.info("Idle: guard — large model in cooldown", {
-          sessionID: props.sessionID,
-          model: formatModelKey(parsedModel),
-        });
-        return;
-      }
+      if (isSameModel(curModel, parsedModel)) return;
+      if (isModelInCooldown(parsedModel.providerID, parsedModel.modelID)) return;
       const largeLimit = getModelContextLimit(formatModelKey(parsedModel));
       const minRatio = getAgentMinContextRatio(config, agent);
-      if (largeLimit && shouldSkipLargeContextFallback(thresholdResult.limit, largeLimit, minRatio)) {
-        await logger.info("Idle: guard — context window ratio too small", {
-          sessionID: props.sessionID,
-          currentLimit: thresholdResult.limit,
-          largeLimit,
-          minRatio,
-        });
-        return;
-      }
+      if (largeLimit && shouldSkipLargeContextFallback(thresholdResult.limit, largeLimit, minRatio)) return;
     }
-    await logger.info("Idle: all guards passed, switching to large model", {
-      sessionID: props.sessionID,
-      largeModel: formatModelKey(parsedModel),
-    });
-    const switched = await handleLargeContextSwitch(
+
+    await handleLargeContextSwitch(
       props.sessionID,
       parsedModel,
       context,
       logger,
       `Context at ${((thresholdResult.usage / thresholdResult.limit) * 100).toFixed(1)}%`,
     );
-    await logger.info("Idle: large context switch result", {
-      sessionID: props.sessionID,
-      success: switched,
-    });
     return;
   }
 
