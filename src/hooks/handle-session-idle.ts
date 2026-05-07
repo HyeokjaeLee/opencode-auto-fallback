@@ -71,7 +71,7 @@ export async function handleSessionIdle(
     if (!parsedModel) return;
 
     const thresholdResult = await checkContextThreshold(props.sessionID, context, logger);
-    if (thresholdResult.usage < thresholdResult.limit) return;
+    if (thresholdResult.limit === 0 || thresholdResult.usage < thresholdResult.limit) return;
 
     await logger.info("Idle: context at limit, switching to large model", {
       sessionID: props.sessionID,

@@ -313,7 +313,7 @@ function createChatParamsHandler(
     if (!getLargeContextPhase(input.sessionID)) {
       if (input.agent && isRegisteredAgent(input.agent)) {
         const threshold = await checkContextThreshold(input.sessionID, context, logger);
-        if (threshold.usage >= threshold.limit) {
+        if (threshold.limit > 0 && threshold.usage >= threshold.limit) {
           await logger.info("Pre-generation: context at limit, aborting", {
             sessionID: input.sessionID,
             usage: threshold.usage,
