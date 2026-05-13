@@ -138,9 +138,9 @@ export async function createPlugin(context: PluginInput): Promise<PluginHooks> {
             context,
             {
               title: "Plugin Updated",
-              message: `opencode-auto-fallback updated to ${info.latest}`,
+              message: `opencode-auto-fallback updated to ${info.latest}. Restart opencode to apply.`,
               variant: "success",
-              duration: TOAST_DURATION_MS,
+              duration: TOAST_DURATION_LONG_MS,
             },
             logger,
           );
@@ -313,11 +313,12 @@ function createChatParamsHandler(
     if (!getLargeContextPhase(input.sessionID)) {
       if (input.agent && isRegisteredAgent(input.agent)) {
         const threshold = await checkContextThreshold(input.sessionID, context, logger);
-        if (threshold.limit > 0 && threshold.usage >= threshold.limit) {
-          await logger.info("Pre-generation: context at limit, aborting", {
+        if (threshold.atThreshold) {
+          await logger.info("Pre-generation: context at threshold, aborting", {
             sessionID: input.sessionID,
             usage: threshold.usage,
             limit: threshold.limit,
+            atThreshold: threshold.atThreshold,
           });
           await abortSessionSafely(input.sessionID, context);
           return;

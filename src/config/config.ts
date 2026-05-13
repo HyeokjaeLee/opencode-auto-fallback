@@ -235,7 +235,7 @@ export function getRegisteredAgentNames(config: FallbackConfig): string[] {
   return Object.entries(config.agents)
     .filter(([_, ac]) => {
       if (ac.largeContextModel === false) return false;
-      return ac.largeContextModel !== undefined || config.defaultLargeContextModel !== undefined;
+      return ac.largeContextModel !== undefined || !!config.defaultLargeContextModel;
     })
     .map(([name]) => normalizeAgentName(name));
 }
