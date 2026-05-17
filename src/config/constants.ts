@@ -28,6 +28,15 @@ export const PERMANENT_RATE_LIMIT_PATTERNS: readonly string[] = [
   "billing",
 ];
 
+export const UNSUPPORTED_CONTENT_PATTERNS: readonly string[] = [
+  "functionality not supported",
+  "unsupported content type",
+  "does not support images",
+  "image input is not supported",
+  "not supported for images",
+  "not support image input",
+];
+
 export const CONTEXT_OVERFLOW_PATTERNS: readonly string[] = [
   "context length",
   "maximum context",

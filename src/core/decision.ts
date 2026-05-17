@@ -4,6 +4,7 @@ import {
   PERMANENT_RATE_LIMIT_PATTERNS,
   RETRYABLE_STATUS_CODES,
   TRANSIENT_ERROR_PATTERNS,
+  UNSUPPORTED_CONTENT_PATTERNS,
 } from "@/config/constants";
 import type { FallbackDecision } from "@/config/types";
 
@@ -46,4 +47,9 @@ export function isPermanentRateLimitMessage(message: string): boolean {
 export function isContextOverflowError(message: string): boolean {
   const lower = message.toLowerCase();
   return CONTEXT_OVERFLOW_PATTERNS.some((pattern) => lower.includes(pattern));
+}
+
+export function isUnsupportedContentError(message: string): boolean {
+  const lower = message.toLowerCase();
+  return UNSUPPORTED_CONTENT_PATTERNS.some((pattern) => lower.includes(pattern));
 }

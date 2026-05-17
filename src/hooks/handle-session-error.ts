@@ -1,6 +1,6 @@
 import { getAgentLargeContextModel } from "@/config/config";
 import type { FallbackConfig } from "@/config/types";
-import { classifyError, isContextOverflowError } from "@/core/decision";
+import { classifyError, isContextOverflowError, isUnsupportedContentError } from "@/core/decision";
 import { handleRetry, handleImmediate } from "@/core/fallback";
 import { handleLargeContextSwitch } from "@/core/large-context";
 import {
@@ -111,6 +111,14 @@ export async function handleSessionError(
       }
       return;
     }
+  }
+
+  if (err.data.message && isUnsupportedContentError(err.data.message)) {
+    await logger.warn("Unsupported content error, skipping retry/fallback", {
+      sessionID,
+      message: err.data.message,
+    });
+    return;
   }
 
   const isAuthError = err.name === "ProviderAuthError";
