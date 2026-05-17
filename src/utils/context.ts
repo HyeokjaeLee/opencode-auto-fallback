@@ -1,9 +1,7 @@
 import {
-  getCompactionReserved,
   getCurrentModel,
   getModelContextLimit,
   getModelInputLimit,
-  getModelOutputLimit,
 } from "@/state/context-state";
 
 import { serializeError } from "./error";
@@ -83,15 +81,9 @@ export async function checkContextThreshold(
     if (!ctxLimit || ctxLimit === 0) return { atThreshold: false, usage: 0, limit: 0 };
 
     const inputLimit = getModelInputLimit(key);
-    const outputLimit = getModelOutputLimit(key);
 
     const count = lastInput + lastOutput + lastCacheRead + lastCacheWrite;
-    const maxOutput = Math.min(outputLimit ?? 32_000, 32_000);
-    const configReserved = getCompactionReserved();
-    const reserved = configReserved ?? Math.min(20_000, outputLimit ?? maxOutput);
-    const usable = inputLimit
-      ? Math.max(0, inputLimit - reserved)
-      : Math.max(0, ctxLimit - maxOutput);
+    const usable = inputLimit ?? ctxLimit;
 
     const atThreshold = count >= usable;
 
@@ -103,9 +95,6 @@ export async function checkContextThreshold(
       usage: count,
       limit: ctxLimit,
       inputLimit,
-      outputLimit,
-      reserved,
-      maxOutput,
       lastInput,
       lastOutput,
       lastReasoning,

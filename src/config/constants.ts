@@ -63,10 +63,11 @@ export const TOAST_DURATION_MS = 5_000;
 export const TOAST_DURATION_LONG_MS = 8_000;
 
 /** Text sent to large model after seamless switch to continue the conversation */
-export const LARGE_CONTEXT_CONTINUATION = "Continue from where you left off.";
+export const LARGE_CONTEXT_CONTINUATION = "Continue";
 
 /** Text sent to original model after switch-back from large context model */
-export const RETURN_CONTINUATION = "Continue from where you left off.";
+export const RETURN_CONTINUATION =
+  "If there is remaining work from the previous task, continue it. Otherwise, provide a summary of what was completed.";
 
 export const COMPACTION_FALLBACK_TOKEN_LIMIT = 30_000;
 
