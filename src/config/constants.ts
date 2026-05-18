@@ -73,3 +73,6 @@ export const COMPACTION_FALLBACK_TOKEN_LIMIT = 30_000;
 
 /** Default minimum fractional increase in context window required to trigger large context fallback */
 export const DEFAULT_MIN_CONTEXT_RATIO = 0.1;
+
+/** Fraction of context window at which idle handler triggers large context switching (0.95 = 95%) */
+export const CONTEXT_THRESHOLD_RATIO = 0.95;

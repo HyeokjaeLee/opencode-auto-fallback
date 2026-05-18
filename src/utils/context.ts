@@ -4,6 +4,7 @@ import {
   getModelInputLimit,
 } from "@/state/context-state";
 
+import { CONTEXT_THRESHOLD_RATIO } from "@/config/constants";
 import { serializeError } from "./error";
 import { formatModelKey } from "./model";
 
@@ -82,10 +83,10 @@ export async function checkContextThreshold(
 
     const inputLimit = getModelInputLimit(key);
 
-    const count = lastInput + lastOutput + lastCacheRead + lastCacheWrite;
+    const count = lastInput + lastOutput + lastReasoning + lastCacheRead + lastCacheWrite;
     const usable = inputLimit ?? ctxLimit;
 
-    const atThreshold = count >= usable;
+    const atThreshold = count >= usable * CONTEXT_THRESHOLD_RATIO;
 
     await logger.info("Idle: context check", {
       sessionID,
