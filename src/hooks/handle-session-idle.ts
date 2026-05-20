@@ -65,7 +65,36 @@ export async function handleSessionIdle(
   }
 
   if (!phase) {
-    if (!agent || !isRegisteredAgent(agent)) return;
+    if (!agent) return;
+
+    // Non-registered agents (largeContextModel: false): auto-compaction is disabled
+    // globally by the config hook, but this agent opted out of large context fallback.
+    // Trigger manual compact as safety net when context is at threshold.
+    if (!isRegisteredAgent(agent)) {
+      const thresholdResult = await checkContextThreshold(props.sessionID, context, logger);
+      if (thresholdResult.limit === 0 || !thresholdResult.atThreshold) return;
+
+      const curModel = getCurrentModel(props.sessionID);
+      await logger.info("Idle: non-registered agent at context limit, triggering manual compact", {
+        sessionID: props.sessionID,
+        agent,
+        usage: thresholdResult.usage,
+        limit: thresholdResult.limit,
+      });
+      try {
+        await context.client.session.summarize({
+          path: { id: props.sessionID },
+          ...(curModel
+            ? { body: { providerID: curModel.providerID, modelID: curModel.modelID } }
+            : {}),
+        });
+      } catch {
+        await logger.info("Idle: manual compact failed for non-registered agent", {
+          sessionID: props.sessionID,
+        });
+      }
+      return;
+    }
 
     const parsedModel = getAgentLargeContextModel(config, agent);
     if (!parsedModel) return;
