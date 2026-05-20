@@ -165,6 +165,10 @@ export function isRegisteredAgent(agent: string): boolean {
   return registeredAgentSet.has(normalizeAgentName(agent));
 }
 
+export function hasRegisteredAgents(): boolean {
+  return registeredAgentSet.size > 0;
+}
+
 let compactionReserved: number | undefined = undefined;
 
 export function setCompactionReserved(v: number | undefined): void {

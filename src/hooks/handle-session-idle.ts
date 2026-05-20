@@ -14,6 +14,7 @@ import {
   clearCompactionTarget,
   getSessionOriginalAgent,
   isRegisteredAgent,
+  hasRegisteredAgents,
   getModelContextLimit,
   setSessionOriginalAgent,
 } from "@/state/context-state";
@@ -70,7 +71,12 @@ export async function handleSessionIdle(
     // Non-registered agents (largeContextModel: false): auto-compaction is disabled
     // globally by the config hook, but this agent opted out of large context fallback.
     // Trigger manual compact as safety net when context is at threshold.
+    // Only act when the plugin disabled auto-compaction (i.e. other agents have
+    // largeContextModel set). If no agents use largeContextModel, opencode's
+    // native compaction handles everything — don't double-compact.
     if (!isRegisteredAgent(agent)) {
+      if (!hasRegisteredAgents()) return;
+
       const thresholdResult = await checkContextThreshold(props.sessionID, context, logger);
       if (thresholdResult.limit === 0 || !thresholdResult.atThreshold) return;
 
