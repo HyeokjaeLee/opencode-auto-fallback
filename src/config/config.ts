@@ -184,18 +184,28 @@ function resolveEntry(entry: FallbackEntry): FallbackModel {
   return result;
 }
 
+function modelKey(model: FallbackModel): string {
+  return `${model.providerID}/${model.modelID}`;
+}
+
 export function getFallbackChain(
   config: FallbackConfig,
   agent: string | undefined,
 ): FallbackModel[] {
   const agentKey = getAgentKey(config.agents, agent);
-  const raw = agentKey
-    ? config.agents[agentKey].fallback ?? config.defaultFallback
-    : config.defaultFallback;
+  const agentHasExplicitFallback = agentKey && config.agents[agentKey].fallback !== undefined;
 
-  if (!raw) return [];
+  if (!agentHasExplicitFallback) {
+    if (!config.defaultFallback?.length) return [];
+    return config.defaultFallback.map(resolveEntry);
+  }
 
-  return raw.map(resolveEntry);
+  const agentChain = config.agents[agentKey!].fallback!.map(resolveEntry);
+  if (!config.defaultFallback?.length) return agentChain;
+
+  const seen = new Set(agentChain.map(modelKey));
+  const defaults = config.defaultFallback.map(resolveEntry).filter((m) => !seen.has(modelKey(m)));
+  return [...agentChain, ...defaults];
 }
 
 export function getAgentLargeContextModel(

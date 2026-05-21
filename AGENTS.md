@@ -55,7 +55,7 @@ New unified schema (post-v0.4.x). Old `agentFallbacks` and `largeContextFallback
 ### Inheritance
 
 ```
-agents.<name>.fallback          → defaultFallback (empty if neither exists)
+agents.<name>.fallback          → agent fallback chain + defaultFallback (deduped) — if agent has no explicit fallback, defaultFallback only
 agents.<name>.largeContextModel → defaultLargeContextModel (false = disabled)
 agents.<name>.minContextRatio   → defaultMinContextRatio (default 0.1)
 ```
@@ -115,7 +115,7 @@ Setting `largeContextModel: false` explicitly opts out even if a default exists.
 bun install            # Install deps (uses bun.lock)
 tsc --noEmit           # TypeScript typecheck
 bun run build          # Build with tsup → dist/
-bun vitest run         # Run all tests (73 tests)
+bun vitest run         # Run all tests (83 tests)
 npm version patch --no-git-tag-version  # Bump version (CI handles release)
 ```
 

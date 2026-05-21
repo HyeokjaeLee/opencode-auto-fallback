@@ -15,11 +15,6 @@
       "description": "Automatically check for and install plugin updates on startup",
       "default": false
     },
-    "autoUpdate": {
-      "type": "boolean",
-      "description": "Automatically check for and install plugin updates on startup",
-      "default": true
-    },
     "defaultFallback": {
       "description": "Default fallback model chain. Inherited by agents without their own fallback. When omitted, only agents with explicit fallback in the agents map will trigger fallback.",
       "oneOf": [
@@ -81,7 +76,7 @@
       "description": "Per-agent settings. Omitted fields inherit from top-level defaults.",
       "properties": {
         "fallback": {
-          "description": "Agent-specific fallback model chain. Overrides defaultFallback.",
+          "description": "Agent-specific fallback model chain. Tried first, then defaultFallback models not already in this chain (deduped by providerID/modelID).",
           "oneOf": [
             {
               "type": "array",

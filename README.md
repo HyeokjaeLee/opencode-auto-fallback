@@ -83,11 +83,13 @@ Each entry in the `agents` map configures behavior for a specific agent. All fie
 
 | Field               | Type                | Inherited From          | Description                                                                                                         |
 | ------------------- | ------------------- | ----------------------- | ------------------------------------------------------------------------------------------------------------------- |
-| `fallback`          | `FallbackEntry[]`   | `defaultFallback`       | Fallback model chain for this agent. Overrides `defaultFallback` when set.                                          |
+| `fallback`          | `FallbackEntry[]`   | `defaultFallback`       | Fallback model chain for this agent. Agent chain is tried first, then `defaultFallback` models not already tried (deduped).                                          |
 | `largeContextModel` | `string \| false`   | `defaultLargeContextModel` | Model to switch to when this agent's context fills up. Set `false` to explicitly disable even if a default exists. |
 | `minContextRatio`   | `number`            | `defaultMinContextRatio` | Minimum context window increase ratio for this agent. Overrides the default.                                        |
 
-**Inheritance rule**: per-agent field → top-level default → `false`/empty.
+**Inheritance rule**:
+- `largeContextModel`, `minContextRatio`: per-agent field → top-level default → `false`/empty.
+- `fallback`: agent chain first, then `defaultFallback` models not already in the agent chain (deduped by `providerID/modelID`). If agent has no explicit `fallback`, uses `defaultFallback` only.
 
 #### Fallback Entry
 
@@ -225,6 +227,8 @@ Immediate fallback errors (quota, auth) skip retries entirely and go straight to
 
 The plugin tries each model in the chain sequentially. Models in cooldown are automatically skipped. If all models are exhausted, the error is logged and a critical toast is shown.
 
+When an agent has its own `fallback` chain, the plugin tries all agent-specific models first, then continues with `defaultFallback` models that weren't already tried (deduped by `providerID/modelID`). This ensures no model is attempted twice while still leveraging the global fallback pool.
+
 ### Compatibility with Other Fallback Plugins
 
 If another plugin with model fallback logic is installed alongside this one, place **`opencode-auto-fallback` first** in the plugin array. The first plugin in the list processes the model response first — by placing this plugin first, it intercepts the error before other fallback plugins see it.
@@ -249,7 +253,7 @@ tsc --noEmit
 # Build (tsup → dist/)
 bun run build
 
-# Run tests (73 tests)
+# Run tests (83 tests)
 bun vitest run
 
 # Bump version (CI auto-publishes)

@@ -43,7 +43,6 @@ export const CONTEXT_OVERFLOW_PATTERNS: readonly string[] = [
   "too many tokens",
   "token limit",
   "context length exceeded",
-  "max_tokens",
   "maximum prompt length",
   "context window",
   "input too long",
