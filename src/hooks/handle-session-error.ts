@@ -1,6 +1,11 @@
 import { getAgentLargeContextModel } from "@/config/config";
 import type { FallbackConfig } from "@/config/types";
-import { classifyError, isContextOverflowError, isUnsupportedContentError } from "@/core/decision";
+import {
+  classifyError,
+  isContextOverflowError,
+  isPermanentRateLimitMessage,
+  isUnsupportedContentError,
+} from "@/core/decision";
 import { handleRetry, handleImmediate } from "@/core/fallback";
 import { handleLargeContextSwitch } from "@/core/large-context";
 import {
@@ -56,7 +61,12 @@ export async function handleSessionError(
     return;
   }
 
-  if (err.data.message && isContextOverflowError(err.data.message)) {
+  if (err.data.message && isPermanentRateLimitMessage(err.data.message)) {
+    await logger.info("Permanent rate limit / credit error, skipping context overflow check", {
+      sessionID,
+      message: err.data.message,
+    });
+  } else if (err.data.message && isContextOverflowError(err.data.message)) {
     const agent = getSessionOriginalAgent(sessionID);
     const parsedModel = agent ? getAgentLargeContextModel(config, agent) : null;
 
