@@ -49,16 +49,14 @@ describe("getFallbackChain", () => {
     maxRetries: 3,
     logging: false,
   };
-  it("agent-specific appends defaultFallback (deduped)", () =>
+  it("agent-specific returns only agent chain (no default)", () =>
     expect(getFallbackChain(config, "build")).toEqual([
       { providerID: "anthropic", modelID: "claude-sonnet-4" },
-      { providerID: "anthropic", modelID: "claude-opus-4-5" },
     ]));
-  it("preserves variant and appends defaultFallback", () =>
+  it("preserves variant without appending defaultFallback", () =>
     expect(getFallbackChain(config, "oracle")).toEqual([
       { providerID: "openai", modelID: "gpt-5.5" },
       { providerID: "zai-coding-plan", modelID: "glm-5.1", variant: "high" },
-      { providerID: "anthropic", modelID: "claude-opus-4-5" },
     ]));
   it("falls back to default", () =>
     expect(getFallbackChain(config, "unknown")).toEqual([
@@ -112,7 +110,6 @@ describe("getFallbackChain", () => {
     };
     expect(getFallbackChain(configWithDisplayName, "​Sisyphus - Ultraworker")).toEqual([
       { providerID: "opencode-go", modelID: "deepseek-v4-pro" },
-      { providerID: "anthropic", modelID: "claude-opus-4-5" },
     ]);
   });
   it("deduplicates when agent fallback overlaps with defaultFallback", () => {
