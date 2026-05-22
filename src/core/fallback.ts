@@ -4,6 +4,7 @@ import type { FallbackConfig, FallbackModel } from "@/config/types";
 import {
   deleteLargeContextPhase,
   getCurrentModel,
+  getLargeContextPhase,
   getSessionOriginalAgent,
   setActiveFallbackParams,
   setSessionCooldownModel,
@@ -123,6 +124,15 @@ export async function handleRetry(
   logger: Logger,
   context: PluginInput,
 ): Promise<void> {
+  const phase = getLargeContextPhase(sessionID);
+  if (phase === "active" || phase === "pending") {
+    await logger.info("Skipping retry — large context model active", {
+      sessionID,
+      phase,
+    });
+    return;
+  }
+
   const backoffLevel = incrementBackoff(sessionID);
   const currentModel = getCurrentModel(sessionID);
   const agent = getSessionOriginalAgent(sessionID);
@@ -182,6 +192,15 @@ export async function handleImmediate(
   logger: Logger,
   context: PluginInput,
 ): Promise<void> {
+  const phase = getLargeContextPhase(sessionID);
+  if (phase === "active" || phase === "pending") {
+    await logger.info("Skipping fallback — large context model active", {
+      sessionID,
+      phase,
+    });
+    return;
+  }
+
   activateCooldown(sessionID, config.cooldownMs);
   const currentModel = getCurrentModel(sessionID);
   const agent = getSessionOriginalAgent(sessionID);

@@ -200,12 +200,7 @@ export function getFallbackChain(
     return config.defaultFallback.map(resolveEntry);
   }
 
-  const agentChain = config.agents[agentKey!].fallback!.map(resolveEntry);
-  if (!config.defaultFallback?.length) return agentChain;
-
-  const seen = new Set(agentChain.map(modelKey));
-  const defaults = config.defaultFallback.map(resolveEntry).filter((m) => !seen.has(modelKey(m)));
-  return [...agentChain, ...defaults];
+  return config.agents[agentKey!].fallback!.map(resolveEntry);
 }
 
 export function getAgentLargeContextModel(
