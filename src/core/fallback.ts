@@ -1,8 +1,10 @@
 import { getFallbackChain } from "@/config/config";
-import { BACKOFF_BASE_MS, REVERT_DELAY_MS, TOAST_DURATION_MS } from "@/config/constants";
+import { BACKOFF_BASE_MS, LARGE_CONTEXT_CONTINUATION, TOAST_DURATION_MS } from "@/config/constants";
 import type { FallbackConfig, FallbackModel } from "@/config/types";
 import {
   deleteLargeContextPhase,
+  getCurrentModel,
+  getSessionOriginalAgent,
   setActiveFallbackParams,
   setSessionCooldownModel,
 } from "@/state/context-state";
@@ -10,40 +12,32 @@ import { isModelInCooldown, markModelCooldown } from "@/state/provider-state";
 import { activateCooldown, incrementBackoff, resetBackoff } from "@/state/session-state";
 import { serializeError } from "@/utils/error";
 import { formatModelKey } from "@/utils/model";
-import type { ChatMessageInput, Logger } from "@/utils/session-utils";
-import { abortSession, fetchSessionData, showToastSafely } from "@/utils/session-utils";
+import type { Logger } from "@/utils/session-utils";
+import { abortSession, showToastSafely } from "@/utils/session-utils";
 
-import type { PromptPart } from "./message";
 import type { PluginInput } from "@opencode-ai/plugin";
 
-export async function revertAndPrompt(
+export async function fallbackToModel(
   sessionID: string,
   agent: string | undefined,
-  parts: PromptPart[],
-  messageID: string,
   model: FallbackModel,
   logger: Logger,
   context: PluginInput,
 ): Promise<boolean> {
   try {
     setActiveFallbackParams(sessionID, model);
-    await context.client.session.revert({
-      path: { id: sessionID },
-      body: { messageID },
-    });
-    await new Promise((resolve) => setTimeout(resolve, REVERT_DELAY_MS));
     await context.client.session.prompt({
       path: { id: sessionID },
       body: {
         model: { providerID: model.providerID, modelID: model.modelID },
         agent,
-        parts,
+        parts: [{ type: "text", text: LARGE_CONTEXT_CONTINUATION }],
         ...(model.variant ? { variant: model.variant } : {}),
       },
     });
     return true;
   } catch (err) {
-    await logger.warn("Prompt failed", {
+    await logger.warn("Fallback prompt failed", {
       sessionID,
       model,
       error: serializeError(err),
@@ -72,8 +66,6 @@ export async function tryFallbackChain(
   sessionID: string,
   chain: FallbackModel[],
   agent: string | undefined,
-  parts: PromptPart[],
-  messageID: string,
   logger: Logger,
   context: PluginInput,
 ): Promise<boolean> {
@@ -90,7 +82,7 @@ export async function tryFallbackChain(
       sessionID,
       model: chain[i],
     });
-    if (await revertAndPrompt(sessionID, agent, parts, messageID, chain[i], logger, context)) {
+    if (await fallbackToModel(sessionID, agent, chain[i], logger, context)) {
       await logger.info("Fallback chain succeeded", {
         sessionID,
         triedCount: i + 1,
@@ -130,14 +122,10 @@ export async function handleRetry(
   config: FallbackConfig,
   logger: Logger,
   context: PluginInput,
-  hookInput?: ChatMessageInput,
 ): Promise<void> {
   const backoffLevel = incrementBackoff(sessionID);
-  const { extracted, currentModel } = await fetchSessionData(sessionID, context, logger, hookInput);
-  if (!extracted) {
-    await logger.error("Cannot retry: missing user message", { sessionID });
-    return;
-  }
+  const currentModel = getCurrentModel(sessionID);
+  const agent = getSessionOriginalAgent(sessionID);
 
   await abortSession(sessionID, context);
 
@@ -147,11 +135,9 @@ export async function handleRetry(
       sessionID,
     });
     await new Promise((resolve) => setTimeout(resolve, waitMs));
-    const ok = await revertAndPrompt(
+    const ok = await fallbackToModel(
       sessionID,
-      extracted.info.agent,
-      extracted.parts,
-      extracted.info.id,
+      agent,
       { providerID: currentModel.providerID, modelID: currentModel.modelID },
       logger,
       context,
@@ -185,17 +171,9 @@ export async function handleRetry(
       sessionID,
     });
   }
-  const chain = await getValidatedFallbackChain(config, extracted.info.agent, sessionID, logger);
+  const chain = await getValidatedFallbackChain(config, agent, sessionID, logger);
   if (chain.length === 0) return;
-  await tryFallbackChain(
-    sessionID,
-    chain,
-    extracted.info.agent,
-    extracted.parts,
-    extracted.info.id,
-    logger,
-    context,
-  );
+  await tryFallbackChain(sessionID, chain, agent, logger, context);
 }
 
 export async function handleImmediate(
@@ -203,10 +181,10 @@ export async function handleImmediate(
   config: FallbackConfig,
   logger: Logger,
   context: PluginInput,
-  hookInput?: ChatMessageInput,
 ): Promise<void> {
   activateCooldown(sessionID, config.cooldownMs);
-  const { extracted, currentModel } = await fetchSessionData(sessionID, context, logger, hookInput);
+  const currentModel = getCurrentModel(sessionID);
+  const agent = getSessionOriginalAgent(sessionID);
 
   if (currentModel) {
     markModelCooldown(currentModel.providerID, currentModel.modelID, config.cooldownMs);
@@ -226,25 +204,12 @@ export async function handleImmediate(
     });
   }
 
-  if (!extracted) {
-    await logger.error("Cannot fallback: no valid user message", { sessionID });
-    return;
-  }
-
   await abortSession(sessionID, context);
   deleteLargeContextPhase(sessionID);
-  const chain = await getValidatedFallbackChain(config, extracted.info.agent, sessionID, logger);
+  const chain = await getValidatedFallbackChain(config, agent, sessionID, logger);
   await logger.info(`Immediate fallback chain (${chain.length} models)`, {
     sessionID,
   });
   if (chain.length === 0) return;
-  await tryFallbackChain(
-    sessionID,
-    chain,
-    extracted.info.agent,
-    extracted.parts,
-    extracted.info.id,
-    logger,
-    context,
-  );
+  await tryFallbackChain(sessionID, chain, agent, logger, context);
 }
