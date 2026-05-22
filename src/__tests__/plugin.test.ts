@@ -1,14 +1,20 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { FallbackConfig } from "@/config/types";
-import { handleImmediate, handleRetry, revertAndPrompt, tryFallbackChain } from "@/core/fallback";
+import { fallbackToModel, handleImmediate, handleRetry, tryFallbackChain } from "@/core/fallback";
 import { shouldSkipLargeContextFallback } from "@/core/large-context";
-import { isRegisteredAgent, setRegisteredAgents } from "@/state/context-state";
+import {
+  cleanupSession,
+  isRegisteredAgent,
+  setCurrentModel,
+  setRegisteredAgents,
+  setSessionOriginalAgent,
+} from "@/state/context-state";
 import { isModelInCooldown } from "@/state/provider-state";
 import { removeSession } from "@/state/session-state";
 import { showToastSafely } from "@/utils/session-utils";
 
-import { createMockContext, createMockMessages } from "./mocks";
+import { createMockContext } from "./mocks";
 
 function makeConfig(overrides?: Partial<FallbackConfig>): FallbackConfig {
   return {
@@ -34,6 +40,7 @@ const noopLogger = {
 const SESSION = "test-session-1";
 
 afterEach(() => {
+  cleanupSession(SESSION);
   removeSession(SESSION);
   vi.clearAllMocks();
 });
@@ -93,25 +100,14 @@ describe("isRegisteredAgent", () => {
 describe("tryFallbackChain", () => {
   it("tries models in order until success", async () => {
     const mockPrompt = vi.fn().mockResolvedValue(undefined);
-    const mockRevert = vi
-      .fn()
-      .mockResolvedValue({ response: { status: 200 }, data: { revert: {} } });
-    const ctx = createMockContext({ prompt: mockPrompt, revert: mockRevert });
+    const ctx = createMockContext({ prompt: mockPrompt });
 
     const chain = [
       { providerID: "openai", modelID: "gpt-5.4" },
       { providerID: "zai-coding-plan", modelID: "glm-5.1" },
     ];
 
-    const ok = await tryFallbackChain(
-      SESSION,
-      chain,
-      "oracle",
-      [{ type: "text", text: "hi" }],
-      "msg-u1",
-      noopLogger,
-      ctx,
-    );
+    const ok = await tryFallbackChain(SESSION, chain, "oracle", noopLogger, ctx);
 
     expect(ok).toBe(true);
     expect(mockPrompt).toHaveBeenCalledTimes(1);
@@ -131,25 +127,14 @@ describe("tryFallbackChain", () => {
       if (callCount === 2) return Promise.resolve(undefined);
       return Promise.reject(new Error("connection failed"));
     });
-    const mockRevert = vi
-      .fn()
-      .mockResolvedValue({ response: { status: 200 }, data: { revert: {} } });
-    const ctx = createMockContext({ prompt: mockPrompt, revert: mockRevert });
+    const ctx = createMockContext({ prompt: mockPrompt });
 
     const chain = [
       { providerID: "openai", modelID: "gpt-5.4" },
       { providerID: "zai-coding-plan", modelID: "glm-5.1" },
     ];
 
-    const ok = await tryFallbackChain(
-      SESSION,
-      chain,
-      "oracle",
-      [{ type: "text", text: "hi" }],
-      "msg-u1",
-      noopLogger,
-      ctx,
-    );
+    const ok = await tryFallbackChain(SESSION, chain, "oracle", noopLogger, ctx);
 
     expect(ok).toBe(true);
     expect(mockPrompt).toHaveBeenCalledTimes(2);
@@ -157,17 +142,12 @@ describe("tryFallbackChain", () => {
 
   it("returns false when all models exhausted", async () => {
     const mockPrompt = vi.fn().mockRejectedValue(new Error("all failed"));
-    const mockRevert = vi
-      .fn()
-      .mockResolvedValue({ response: { status: 200 }, data: { revert: {} } });
-    const ctx = createMockContext({ prompt: mockPrompt, revert: mockRevert });
+    const ctx = createMockContext({ prompt: mockPrompt });
 
     const ok = await tryFallbackChain(
       SESSION,
       [{ providerID: "openai", modelID: "gpt-5.4" }],
       "oracle",
-      [{ type: "text", text: "hi" }],
-      "msg-u1",
       noopLogger,
       ctx,
     );
@@ -183,24 +163,12 @@ describe("tryFallbackChain", () => {
 describe("handleImmediate", () => {
   it("aborts, marks cooldown, and tries fallback chain", async () => {
     const mockAbort = vi.fn().mockResolvedValue(undefined);
-    const mockMessages = vi.fn().mockResolvedValue({
-      data: createMockMessages({
-        providerID: "openai",
-        modelID: "gpt-5.5",
-        agent: "oracle",
-      }),
-    });
-    const mockRevert = vi
-      .fn()
-      .mockResolvedValue({ response: { status: 200 }, data: { revert: {} } });
     const mockPrompt = vi.fn().mockResolvedValue(undefined);
-    const ctx = createMockContext({
-      abort: mockAbort,
-      messages: mockMessages,
-      revert: mockRevert,
-      prompt: mockPrompt,
-    });
+    const ctx = createMockContext({ abort: mockAbort, prompt: mockPrompt });
     const config = makeConfig();
+
+    setCurrentModel(SESSION, "openai", "gpt-5.5");
+    setSessionOriginalAgent(SESSION, "oracle");
 
     await handleImmediate(SESSION, config, noopLogger, ctx);
 
@@ -214,65 +182,47 @@ describe("handleImmediate", () => {
     );
   });
 
-  it("marks model cooldown from hook input when messages have no assistant", async () => {
-    const mockMessages = vi.fn().mockResolvedValue({ data: [] });
-    const ctx = createMockContext({ messages: mockMessages });
+  it("marks model cooldown from context state", async () => {
+    const ctx = createMockContext();
     const config = makeConfig();
 
-    await handleImmediate(SESSION, config, noopLogger, ctx, {
-      sessionID: SESSION,
-      agent: "oracle",
-      model: { providerID: "anthropic", modelID: "claude-sonnet-4" },
-    });
+    setCurrentModel(SESSION, "anthropic", "claude-sonnet-4");
+    setSessionOriginalAgent(SESSION, "oracle");
+
+    await handleImmediate(SESSION, config, noopLogger, ctx);
 
     expect(isModelInCooldown("anthropic", "claude-sonnet-4")).toBe(true);
   });
 
-  it("logs error but still marks cooldown when no user message and hook input provided", async () => {
-    const mockMessages = vi.fn().mockResolvedValue({ data: [] });
-    const ctx = createMockContext({ messages: mockMessages });
+  it("logs warning when no current model and still tries chain", async () => {
+    const mockPrompt = vi.fn().mockResolvedValue(undefined);
+    const ctx = createMockContext({ prompt: mockPrompt });
     const config = makeConfig();
 
-    await handleImmediate(SESSION, config, noopLogger, ctx, {
-      sessionID: SESSION,
-      agent: "oracle",
-      model: { providerID: "anthropic", modelID: "claude-sonnet-4" },
-    });
+    setSessionOriginalAgent(SESSION, "oracle");
 
-    expect(noopLogger.error).toHaveBeenCalledWith(
-      "Cannot fallback: no valid user message",
+    await handleImmediate(SESSION, config, noopLogger, ctx);
+
+    expect(noopLogger.info).toHaveBeenCalledWith(
+      expect.stringContaining("Immediate fallback chain"),
       expect.any(Object),
     );
-    expect(isModelInCooldown("anthropic", "claude-sonnet-4")).toBe(true);
   });
 });
 
 describe("handleRetry", () => {
   it("retries same model within maxRetries", async () => {
     const mockAbort = vi.fn().mockResolvedValue(undefined);
-    const mockMessages = vi.fn().mockResolvedValue({
-      data: createMockMessages({
-        providerID: "openai",
-        modelID: "gpt-5.5",
-        agent: "oracle",
-      }),
-    });
-    const mockRevert = vi
-      .fn()
-      .mockResolvedValue({ response: { status: 200 }, data: { revert: {} } });
     const mockPrompt = vi.fn().mockResolvedValue(undefined);
-    const ctx = createMockContext({
-      abort: mockAbort,
-      messages: mockMessages,
-      revert: mockRevert,
-      prompt: mockPrompt,
-    });
+    const ctx = createMockContext({ abort: mockAbort, prompt: mockPrompt });
     const config = makeConfig({ maxRetries: 2 });
+
+    setCurrentModel(SESSION, "openai", "gpt-5.5");
+    setSessionOriginalAgent(SESSION, "oracle");
 
     await handleRetry(SESSION, config, noopLogger, ctx);
 
     expect(mockAbort).toHaveBeenCalled();
-    // Should re-prompt with the SAME model (gpt-5.5), not the fallback (gpt-5.4)
     expect(mockPrompt).toHaveBeenCalledWith(
       expect.objectContaining({
         body: expect.objectContaining({
@@ -284,28 +234,15 @@ describe("handleRetry", () => {
 
   it("switches to fallback chain after maxRetries exhausted", async () => {
     const mockAbort = vi.fn().mockResolvedValue(undefined);
-    const mockMessages = vi.fn().mockResolvedValue({
-      data: createMockMessages({
-        providerID: "openai",
-        modelID: "gpt-5.5",
-        agent: "oracle",
-      }),
-    });
-    const mockRevert = vi
-      .fn()
-      .mockResolvedValue({ response: { status: 200 }, data: { revert: {} } });
     const mockPrompt = vi.fn().mockResolvedValue(undefined);
-    const ctx = createMockContext({
-      abort: mockAbort,
-      messages: mockMessages,
-      revert: mockRevert,
-      prompt: mockPrompt,
-    });
+    const ctx = createMockContext({ abort: mockAbort, prompt: mockPrompt });
     const config = makeConfig({ maxRetries: 0 });
+
+    setCurrentModel(SESSION, "openai", "gpt-5.5");
+    setSessionOriginalAgent(SESSION, "oracle");
 
     await handleRetry(SESSION, config, noopLogger, ctx);
 
-    // Should use the FALLBACK model (gpt-5.4), not the original (gpt-5.5)
     expect(mockPrompt).toHaveBeenCalledWith(
       expect.objectContaining({
         body: expect.objectContaining({
@@ -315,84 +252,42 @@ describe("handleRetry", () => {
     );
   });
 
-  it("does nothing when messages are missing", async () => {
-    const ctx = createMockContext({
-      messages: vi.fn().mockResolvedValue({ data: [] }),
-    });
-
-    await handleRetry(SESSION, makeConfig(), noopLogger, ctx);
-
-    expect(noopLogger.error).toHaveBeenCalledWith(
-      "Cannot retry: missing user message",
-      expect.any(Object),
-    );
-  });
-
-  it("prefers model from assistant message over hook input", async () => {
-    const mockAbort = vi.fn().mockResolvedValue(undefined);
-    const mockMessages = vi.fn().mockResolvedValue({
-      data: createMockMessages({
-        providerID: "openai",
-        modelID: "gpt-5.5",
-        agent: "oracle",
-      }),
-    });
-    const mockRevert = vi
-      .fn()
-      .mockResolvedValue({ response: { status: 200 }, data: { revert: {} } });
+  it("goes straight to chain when no current model", async () => {
     const mockPrompt = vi.fn().mockResolvedValue(undefined);
-    const ctx = createMockContext({
-      abort: mockAbort,
-      messages: mockMessages,
-      revert: mockRevert,
-      prompt: mockPrompt,
-    });
-    const config = makeConfig();
+    const ctx = createMockContext({ prompt: mockPrompt });
+    const config = makeConfig({ maxRetries: 0 });
 
-    await handleRetry(SESSION, config, noopLogger, ctx, {
-      sessionID: SESSION,
-      agent: "oracle",
-      model: { providerID: "anthropic", modelID: "claude-opus-4" },
-    });
+    setSessionOriginalAgent(SESSION, "oracle");
 
-    expect(mockPrompt).toHaveBeenCalledWith(
-      expect.objectContaining({
-        body: expect.objectContaining({
-          model: { providerID: "openai", modelID: "gpt-5.5" },
-        }),
-      }),
+    await handleRetry(SESSION, config, noopLogger, ctx);
+
+    expect(noopLogger.warn).toHaveBeenCalledWith(
+      "No current model available, going straight to fallback chain",
+      expect.any(Object),
     );
   });
 });
 
-describe("revertAndPrompt", () => {
-  it("reverts then prompts with model", async () => {
-    const mockRevert = vi
-      .fn()
-      .mockResolvedValue({ response: { status: 200 }, data: { revert: {} } });
+describe("fallbackToModel", () => {
+  it("prompts with model and Continue text", async () => {
     const mockPrompt = vi.fn().mockResolvedValue(undefined);
-    const ctx = createMockContext({ revert: mockRevert, prompt: mockPrompt });
+    const ctx = createMockContext({ prompt: mockPrompt });
 
-    const ok = await revertAndPrompt(
+    const ok = await fallbackToModel(
       SESSION,
       "oracle",
-      [{ type: "text", text: "hi" }],
-      "msg-u1",
       { providerID: "openai", modelID: "gpt-5.4" },
       noopLogger,
       ctx,
     );
 
     expect(ok).toBe(true);
-    expect(mockRevert).toHaveBeenCalledWith({
-      path: { id: SESSION },
-      body: { messageID: "msg-u1" },
-    });
     expect(mockPrompt).toHaveBeenCalledWith(
       expect.objectContaining({
         body: expect.objectContaining({
           model: { providerID: "openai", modelID: "gpt-5.4" },
           agent: "oracle",
+          parts: [{ type: "text", text: "Continue" }],
         }),
       }),
     );
@@ -402,11 +297,9 @@ describe("revertAndPrompt", () => {
     const mockPrompt = vi.fn().mockResolvedValue(undefined);
     const ctx = createMockContext({ prompt: mockPrompt });
 
-    await revertAndPrompt(
+    await fallbackToModel(
       SESSION,
       "oracle",
-      [{ type: "text", text: "hi" }],
-      "msg-u1",
       { providerID: "openai", modelID: "gpt-5.4", variant: "high" },
       noopLogger,
       ctx,
@@ -440,7 +333,6 @@ describe("shouldSkipLargeContextFallback", () => {
   });
 
   it("respects custom minContextRatio", () => {
-    // 100% difference (ratio = 2), but require 200% (minContextRatio = 2)
     expect(shouldSkipLargeContextFallback(100, 200, 2)).toBe(true);
   });
 });

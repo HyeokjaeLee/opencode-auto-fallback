@@ -52,9 +52,6 @@ export const CONTEXT_OVERFLOW_PATTERNS: readonly string[] = [
 /** Delay after aborting a session before sending a new prompt (ms) */
 export const ABORT_DELAY_MS = 300;
 
-/** Delay after reverting a session before sending a new prompt (ms) */
-export const REVERT_DELAY_MS = 500;
-
 /** Duration for toast notifications (ms) */
 export const TOAST_DURATION_MS = 5_000;
 

@@ -5,7 +5,6 @@ import { getLargeContextPhase, getSessionOriginalAgent } from "@/state/context-s
 import { cleanupExpired } from "@/state/provider-state";
 import { isCooldownActive, resetIfExpired } from "@/state/session-state";
 import type { Logger } from "@/utils/session-utils";
-import { abortSession } from "@/utils/session-utils";
 
 import type { PluginInput } from "@opencode-ai/plugin";
 
@@ -50,7 +49,6 @@ export async function handleSessionStatus(
         message: props.status.message,
       });
 
-      await abortSession(props.sessionID, context);
       await handleImmediate(props.sessionID, config, logger, context);
       return;
     }
@@ -83,7 +81,6 @@ export async function handleSessionStatus(
         return;
       }
 
-      await abortSession(props.sessionID, context);
       await handleImmediate(props.sessionID, config, logger, context);
       return;
     }
