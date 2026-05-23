@@ -16,6 +16,7 @@ import {
 } from "@/state/context-state";
 import { isModelInCooldown } from "@/state/provider-state";
 import { serializeError } from "@/utils/error";
+import { buildFallbackNotificationPart, buildSyntheticContinuationPart } from "@/utils/fallback-notification";
 import { formatModelKey } from "@/utils/model";
 import type { Logger } from "@/utils/session-utils";
 import { fetchSessionData } from "@/utils/session-utils";
@@ -86,7 +87,14 @@ export async function handleLargeContextSwitch(
         body: {
           model: { providerID: largeModel.providerID, modelID: largeModel.modelID },
           agent,
-          parts: [{ type: "text" as const, text: LARGE_CONTEXT_CONTINUATION }],
+          parts: [
+            buildFallbackNotificationPart(
+              formatModelKey(original),
+              formatModelKey(largeModel),
+              "Switching to large context model",
+            ),
+            buildSyntheticContinuationPart(LARGE_CONTEXT_CONTINUATION),
+          ],
         },
       })
       .catch(async (err) => {
@@ -185,7 +193,14 @@ export async function handleLargeContextCompletion(
       path: { id: sessionID },
       body: {
         model: { providerID: original.providerID, modelID: original.modelID },
-        parts: [{ type: "text" as const, text: RETURN_CONTINUATION }],
+        parts: [
+          buildFallbackNotificationPart(
+            formatModelKey(getCurrentModel(sessionID) ?? original),
+            formatModelKey(original),
+            "Returning to default context model",
+          ),
+          buildSyntheticContinuationPart(RETURN_CONTINUATION),
+        ],
       },
     })
     .catch(async (err) => {

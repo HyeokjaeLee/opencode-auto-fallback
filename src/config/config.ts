@@ -145,7 +145,8 @@ export function loadConfig(): FallbackConfig {
       enabled: raw.enabled ?? DEFAULT_CONFIG.enabled,
       autoUpdate: raw.autoUpdate ?? DEFAULT_CONFIG.autoUpdate,
       defaultFallback: raw.defaultFallback ?? DEFAULT_CONFIG.defaultFallback,
-      defaultLargeContextModel: raw.defaultLargeContextModel ?? DEFAULT_CONFIG.defaultLargeContextModel,
+      defaultLargeContextModel:
+        raw.defaultLargeContextModel ?? DEFAULT_CONFIG.defaultLargeContextModel,
       defaultMinContextRatio: raw.defaultMinContextRatio ?? DEFAULT_CONFIG.defaultMinContextRatio,
       agents,
       cooldownMs: raw.cooldownMs ?? DEFAULT_CONFIG.cooldownMs,
@@ -184,10 +185,6 @@ function resolveEntry(entry: FallbackEntry): FallbackModel {
   return result;
 }
 
-function modelKey(model: FallbackModel): string {
-  return `${model.providerID}/${model.modelID}`;
-}
-
 export function getFallbackChain(
   config: FallbackConfig,
   agent: string | undefined,
@@ -223,10 +220,7 @@ export function getAgentLargeContextModel(
   return null;
 }
 
-export function getAgentMinContextRatio(
-  config: FallbackConfig,
-  agent: string | undefined,
-): number {
+export function getAgentMinContextRatio(config: FallbackConfig, agent: string | undefined): number {
   if (agent) {
     const agentKey = getAgentKey(config.agents, agent);
     if (agentKey && config.agents[agentKey].minContextRatio !== undefined) {
