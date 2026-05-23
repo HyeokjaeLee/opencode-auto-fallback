@@ -1,5 +1,5 @@
 import { getFallbackChain } from "@/config/config";
-import { BACKOFF_BASE_MS, LARGE_CONTEXT_CONTINUATION, TOAST_DURATION_MS } from "@/config/constants";
+import { BACKOFF_BASE_MS, LARGE_CONTEXT_CONTINUATION } from "@/config/constants";
 import type { FallbackConfig, FallbackModel } from "@/config/types";
 import {
   deleteLargeContextPhase,
@@ -15,7 +15,7 @@ import { serializeError } from "@/utils/error";
 import { buildFallbackNotificationPart, buildSyntheticContinuationPart } from "@/utils/fallback-notification";
 import { formatModelKey } from "@/utils/model";
 import type { Logger } from "@/utils/session-utils";
-import { abortSession, showToastSafely } from "@/utils/session-utils";
+import { abortSession } from "@/utils/session-utils";
 
 import type { PluginInput } from "@opencode-ai/plugin";
 
@@ -98,29 +98,24 @@ export async function tryFallbackChain(
         sessionID,
         triedCount: i + 1,
       });
-      await showToastSafely(
-        context,
-        {
-          title: "Model Fallback",
-          message: `Switched to ${formatModelKey(chain[i])}`,
-          variant: "info",
-          duration: TOAST_DURATION_MS,
-        },
-        logger,
-      );
       return true;
     }
   }
-  await showToastSafely(
-    context,
-    {
-      title: "Fallback Failed",
-      message: "All fallback models exhausted",
-      variant: "error",
-      duration: TOAST_DURATION_MS,
-    },
-    logger,
-  );
+  try {
+    await context.client.session.prompt({
+      path: { id: sessionID },
+      body: {
+        noReply: true,
+        parts: [
+          buildFallbackNotificationPart(
+            fromModel ? formatModelKey(fromModel) : "unknown",
+            "—",
+            "All fallback models exhausted",
+          ),
+        ],
+      },
+    });
+  } catch {}
   await logger.error("All fallback models exhausted", {
     sessionID,
     chainLength: chain.length,
@@ -179,16 +174,6 @@ export async function handleRetry(
       sessionID,
     });
   } else {
-    await showToastSafely(
-      context,
-      {
-        title: "Retries Exhausted",
-        message: `Switching to fallback after ${config.maxRetries} retries`,
-        variant: "warning",
-        duration: TOAST_DURATION_MS,
-      },
-      logger,
-    );
     await logger.info(`Retries exhausted (${backoffLevel}), starting fallback chain`, {
       sessionID,
     });
@@ -220,16 +205,6 @@ export async function handleImmediate(
   if (currentModel) {
     markModelCooldown(currentModel.providerID, currentModel.modelID, config.cooldownMs);
     setSessionCooldownModel(sessionID, currentModel.providerID, currentModel.modelID);
-    await showToastSafely(
-      context,
-      {
-        title: "Model Error",
-        message: `${formatModelKey(currentModel)} failed, switching to fallback`,
-        variant: "warning",
-        duration: TOAST_DURATION_MS,
-      },
-      logger,
-    );
     await logger.info(`Model ${formatModelKey(currentModel)} in cooldown`, {
       sessionID,
     });
