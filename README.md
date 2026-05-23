@@ -253,7 +253,7 @@ tsc --noEmit
 # Build (tsup → dist/)
 bun run build
 
-# Run tests (83 tests)
+# Run tests
 bun vitest run
 
 # Bump version (CI auto-publishes)
