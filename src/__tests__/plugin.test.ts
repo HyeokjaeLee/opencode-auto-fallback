@@ -107,7 +107,15 @@ describe("tryFallbackChain", () => {
       { providerID: "zai-coding-plan", modelID: "glm-5.1" },
     ];
 
-    const ok = await tryFallbackChain(SESSION, chain, "oracle", noopLogger, ctx);
+    const ok = await tryFallbackChain(
+      SESSION,
+      chain,
+      "oracle",
+      { providerID: "original", modelID: "model-a" },
+      "Test fallback",
+      noopLogger,
+      ctx,
+    );
 
     expect(ok).toBe(true);
     expect(mockPrompt).toHaveBeenCalledTimes(1);
@@ -134,7 +142,15 @@ describe("tryFallbackChain", () => {
       { providerID: "zai-coding-plan", modelID: "glm-5.1" },
     ];
 
-    const ok = await tryFallbackChain(SESSION, chain, "oracle", noopLogger, ctx);
+    const ok = await tryFallbackChain(
+      SESSION,
+      chain,
+      "oracle",
+      { providerID: "original", modelID: "model-a" },
+      "Test fallback",
+      noopLogger,
+      ctx,
+    );
 
     expect(ok).toBe(true);
     expect(mockPrompt).toHaveBeenCalledTimes(2);
@@ -148,6 +164,8 @@ describe("tryFallbackChain", () => {
       SESSION,
       [{ providerID: "openai", modelID: "gpt-5.4" }],
       "oracle",
+      { providerID: "original", modelID: "model-a" },
+      "Test fallback",
       noopLogger,
       ctx,
     );
@@ -276,7 +294,9 @@ describe("fallbackToModel", () => {
     const ok = await fallbackToModel(
       SESSION,
       "oracle",
+      { providerID: "original", modelID: "model-a" },
       { providerID: "openai", modelID: "gpt-5.4" },
+      "Test fallback",
       noopLogger,
       ctx,
     );
@@ -287,7 +307,10 @@ describe("fallbackToModel", () => {
         body: expect.objectContaining({
           model: { providerID: "openai", modelID: "gpt-5.4" },
           agent: "oracle",
-          parts: [{ type: "text", text: "Continue" }],
+          parts: expect.arrayContaining([
+            expect.objectContaining({ type: "text", ignored: true }),
+            expect.objectContaining({ type: "text", synthetic: true, text: "Continue" }),
+          ]),
         }),
       }),
     );
@@ -300,7 +323,9 @@ describe("fallbackToModel", () => {
     await fallbackToModel(
       SESSION,
       "oracle",
+      { providerID: "original", modelID: "model-a" },
       { providerID: "openai", modelID: "gpt-5.4", variant: "high" },
+      "Test fallback",
       noopLogger,
       ctx,
     );

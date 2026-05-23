@@ -2,6 +2,7 @@ import { LARGE_CONTEXT_CONTINUATION } from "@/config/constants";
 import type { FallbackConfig } from "@/config/types";
 import { getLargeContextPhase } from "@/state/context-state";
 import { serializeError } from "@/utils/error";
+import { buildSyntheticContinuationPart } from "@/utils/fallback-notification";
 import type { Logger } from "@/utils/session-utils";
 
 import type { PluginInput } from "@opencode-ai/plugin";
@@ -34,12 +35,7 @@ export async function handleSessionCompacted(
       .prompt({
         path: { id: props.sessionID },
         body: {
-          parts: [
-            {
-              type: "text" as const,
-              text: LARGE_CONTEXT_CONTINUATION,
-            },
-          ],
+          parts: [buildSyntheticContinuationPart(LARGE_CONTEXT_CONTINUATION)],
         },
       })
       .catch(async (err) => {

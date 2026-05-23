@@ -12,6 +12,7 @@ import {
 import { isModelInCooldown, markModelCooldown } from "@/state/provider-state";
 import { activateCooldown, incrementBackoff, resetBackoff } from "@/state/session-state";
 import { serializeError } from "@/utils/error";
+import { buildFallbackNotificationPart, buildSyntheticContinuationPart } from "@/utils/fallback-notification";
 import { formatModelKey } from "@/utils/model";
 import type { Logger } from "@/utils/session-utils";
 import { abortSession, showToastSafely } from "@/utils/session-utils";
@@ -21,26 +22,33 @@ import type { PluginInput } from "@opencode-ai/plugin";
 export async function fallbackToModel(
   sessionID: string,
   agent: string | undefined,
-  model: FallbackModel,
+  fromModel: { providerID: string; modelID: string } | null,
+  toModel: FallbackModel,
+  reason: string,
   logger: Logger,
   context: PluginInput,
 ): Promise<boolean> {
   try {
-    setActiveFallbackParams(sessionID, model);
+    setActiveFallbackParams(sessionID, toModel);
     await context.client.session.prompt({
       path: { id: sessionID },
       body: {
-        model: { providerID: model.providerID, modelID: model.modelID },
+        model: { providerID: toModel.providerID, modelID: toModel.modelID },
         agent,
-        parts: [{ type: "text", text: LARGE_CONTEXT_CONTINUATION }],
-        ...(model.variant ? { variant: model.variant } : {}),
+        parts: [
+          ...(fromModel
+            ? [buildFallbackNotificationPart(formatModelKey(fromModel), formatModelKey(toModel), reason)]
+            : []),
+          buildSyntheticContinuationPart(LARGE_CONTEXT_CONTINUATION),
+        ],
+        ...(toModel.variant ? { variant: toModel.variant } : {}),
       },
     });
     return true;
   } catch (err) {
     await logger.warn("Fallback prompt failed", {
       sessionID,
-      model,
+      model: toModel,
       error: serializeError(err),
     });
     return false;
@@ -67,6 +75,8 @@ export async function tryFallbackChain(
   sessionID: string,
   chain: FallbackModel[],
   agent: string | undefined,
+  fromModel: { providerID: string; modelID: string } | null,
+  reason: string,
   logger: Logger,
   context: PluginInput,
 ): Promise<boolean> {
@@ -83,7 +93,7 @@ export async function tryFallbackChain(
       sessionID,
       model: chain[i],
     });
-    if (await fallbackToModel(sessionID, agent, chain[i], logger, context)) {
+    if (await fallbackToModel(sessionID, agent, fromModel, chain[i], reason, logger, context)) {
       await logger.info("Fallback chain succeeded", {
         sessionID,
         triedCount: i + 1,
@@ -148,7 +158,9 @@ export async function handleRetry(
     const ok = await fallbackToModel(
       sessionID,
       agent,
+      currentModel,
       { providerID: currentModel.providerID, modelID: currentModel.modelID },
+      "Retry attempt",
       logger,
       context,
     );
@@ -183,7 +195,7 @@ export async function handleRetry(
   }
   const chain = await getValidatedFallbackChain(config, agent, sessionID, logger);
   if (chain.length === 0) return;
-  await tryFallbackChain(sessionID, chain, agent, logger, context);
+  await tryFallbackChain(sessionID, chain, agent, currentModel, "Retries exhausted", logger, context);
 }
 
 export async function handleImmediate(
@@ -230,5 +242,5 @@ export async function handleImmediate(
     sessionID,
   });
   if (chain.length === 0) return;
-  await tryFallbackChain(sessionID, chain, agent, logger, context);
+  await tryFallbackChain(sessionID, chain, agent, currentModel, "Immediate fallback", logger, context);
 }
