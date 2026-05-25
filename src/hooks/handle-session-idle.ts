@@ -17,6 +17,7 @@ import {
   hasRegisteredAgents,
   getModelContextLimit,
   setSessionOriginalAgent,
+  getAndClearPendingConfigWarning,
 } from "@/state/context-state";
 import { isModelInCooldown } from "@/state/provider-state";
 import { checkContextThreshold } from "@/utils/context";
@@ -33,8 +34,25 @@ export async function handleSessionIdle(
   event: { type: string; properties: unknown },
 ): Promise<void> {
   const props = event.properties as { sessionID: string };
-  const phase = getLargeContextPhase(props.sessionID);
-  let agent = getSessionOriginalAgent(props.sessionID);
+  const sessionID = props.sessionID;
+
+  const pendingWarning = getAndClearPendingConfigWarning(sessionID);
+  if (pendingWarning) {
+    try {
+      await context.client.session.prompt({
+        path: { id: sessionID },
+        body: {
+          noReply: true,
+          parts: [{ type: "text" as const, text: pendingWarning, ignored: true }],
+        },
+      });
+    } catch (err) {
+      await logger.warn("Failed to send config warning", { error: String(err) });
+    }
+  }
+
+  const phase = getLargeContextPhase(sessionID);
+  let agent = getSessionOriginalAgent(sessionID);
 
   if (!agent || (agent && !isRegisteredAgent(agent))) {
     const previousAgent = agent;

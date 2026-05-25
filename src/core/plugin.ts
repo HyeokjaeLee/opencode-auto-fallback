@@ -29,6 +29,7 @@ import {
   setLargeContextPhase,
   setModelContextLimit,
   setModelLimit,
+  setPendingConfigWarning,
   setRegisteredAgents,
   setSessionOriginalAgent,
 } from "@/state/context-state";
@@ -238,17 +239,8 @@ function createChatParamsHandler(
                 invalidModels: mismatches.invalidModels,
                 allowedAgents: opencodeAgents.map((a) => normalizeAgentName(a)),
               });
-              await showToastSafely(
-                context,
-                {
-                  title: "Fallback Config Mismatch",
-                  message: part.text.replace(/\n<!--.*$/, ""),
-                  variant: "warning",
-                  duration: TOAST_DURATION_LONG_MS,
-                },
-                logger,
-              );
-              await logger.warn("Config mismatch detected", {
+              setPendingConfigWarning(input.sessionID, part.text);
+              await logger.warn("Config mismatch detected (will show after response)", {
                 orphanedConfigKeys: mismatches.orphanedConfigKeys,
                 uncoveredAgents: mismatches.uncoveredAgents,
                 invalidModels: mismatches.invalidModels,
