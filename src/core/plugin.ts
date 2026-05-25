@@ -19,7 +19,6 @@ import {
   getCurrentModel,
   getLargeContextPhase,
   getModelContextLimit,
-  getOpencodeAgentNames,
   getOrSetOriginalModel,
   getRecoveryModel,
   getSessionOriginalAgent,
@@ -30,7 +29,6 @@ import {
   setLargeContextPhase,
   setModelContextLimit,
   setModelLimit,
-  setOpencodeAgentNames,
   setRegisteredAgents,
   setSessionOriginalAgent,
 } from "@/state/context-state";
@@ -172,11 +170,6 @@ export async function createPlugin(context: PluginInput): Promise<PluginHooks> {
 
   return {
     config: async (input) => {
-      const agentMap = (input as Record<string, unknown>).agent;
-      if (agentMap && typeof agentMap === "object") {
-        setOpencodeAgentNames(Object.keys(agentMap as Record<string, unknown>));
-      }
-
       const registeredNames = getRegisteredAgentNames(config);
       if (registeredNames.length === 0) return;
 
@@ -221,34 +214,50 @@ function createChatParamsHandler(
     if (input.agent && !getSessionOriginalAgent(input.sessionID)) {
       setSessionOriginalAgent(input.sessionID, input.agent);
 
-      const opencodeAgents = getOpencodeAgentNames();
-      if (opencodeAgents.length > 0 && Object.keys(config.agents).length > 0) {
-        const mismatches = findConfigMismatches(config, opencodeAgents);
-        const hasIssues =
-          mismatches.orphanedConfigKeys.length > 0 ||
-          mismatches.uncoveredAgents.length > 0 ||
-          mismatches.invalidModels.length > 0;
+      if (Object.keys(config.agents).length > 0) {
+        try {
+          const appClient = (context.client as unknown as Record<string, unknown>).app as
+            | Record<string, unknown>
+            | undefined;
+          const agentsResult = await (appClient?.agents as (() => Promise<unknown>) | undefined)?.();
+          const opencodeAgents: string[] =
+            agentsResult && typeof agentsResult === "object"
+              ? Object.keys(agentsResult as Record<string, unknown>)
+              : [];
 
-        if (hasIssues) {
-          const part = buildConfigWarningPart({
-            invalidAgents: mismatches.orphanedConfigKeys,
-            invalidModels: mismatches.invalidModels,
-            allowedAgents: opencodeAgents.map((a) => normalizeAgentName(a)),
-          });
-          try {
-            await context.client.session.prompt({
-              path: { id: input.sessionID },
-              body: { noReply: true, parts: [part] },
-            });
-          } catch (err) {
-            await logger.warn("Failed to send config warning", {
-              error: serializeError(err),
-            });
+          if (opencodeAgents.length > 0) {
+            const mismatches = findConfigMismatches(config, opencodeAgents);
+            const hasIssues =
+              mismatches.orphanedConfigKeys.length > 0 ||
+              mismatches.uncoveredAgents.length > 0 ||
+              mismatches.invalidModels.length > 0;
+
+            if (hasIssues) {
+              const part = buildConfigWarningPart({
+                invalidAgents: mismatches.orphanedConfigKeys,
+                invalidModels: mismatches.invalidModels,
+                allowedAgents: opencodeAgents.map((a) => normalizeAgentName(a)),
+              });
+              await showToastSafely(
+                context,
+                {
+                  title: "Fallback Config Mismatch",
+                  message: part.text.replace(/\n<!--.*$/, ""),
+                  variant: "warning",
+                  duration: TOAST_DURATION_LONG_MS,
+                },
+                logger,
+              );
+              await logger.warn("Config mismatch detected", {
+                orphanedConfigKeys: mismatches.orphanedConfigKeys,
+                uncoveredAgents: mismatches.uncoveredAgents,
+                invalidModels: mismatches.invalidModels,
+              });
+            }
           }
-          await logger.warn("Config mismatch detected", {
-            orphanedConfigKeys: mismatches.orphanedConfigKeys,
-            uncoveredAgents: mismatches.uncoveredAgents,
-            invalidModels: mismatches.invalidModels,
+        } catch (err) {
+          await logger.warn("Failed to check config mismatches", {
+            error: serializeError(err),
           });
         }
       }
