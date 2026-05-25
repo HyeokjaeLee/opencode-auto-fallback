@@ -46,7 +46,7 @@ const SEARCH_SUBDIRS = ["config", "plugins", "plugin"];
 const SCHEMA_URL =
   "https://raw.githubusercontent.com/HyeokjaeLee/opencode-auto-fallback/main/docs/fallback.schema.json";
 
-function getConfigDir(): string {
+export function getConfigDir(): string {
   if (process.platform === "win32") {
     const appData = process.env.APPDATA ?? join(homedir(), "AppData", "Roaming");
     return join(appData, "opencode");

@@ -10,7 +10,6 @@ const modelContextLimits = new Map<string, number>();
 const sessionOriginalAgent = new Map<string, string>();
 const sessionRestoreModel = new Map<string, ResolvedModel>();
 const registeredAgentSet = new Set<string>();
-const pendingConfigWarnings = new Map<string, string>();
 
 export function setActiveFallbackParams(sessionID: string, model: FallbackModel): void {
   activeFallbackParams.set(sessionID, model);
@@ -168,16 +167,6 @@ export function isRegisteredAgent(agent: string): boolean {
 
 export function hasRegisteredAgents(): boolean {
   return registeredAgentSet.size > 0;
-}
-
-export function setPendingConfigWarning(sessionID: string, text: string): void {
-  pendingConfigWarnings.set(sessionID, text);
-}
-
-export function getAndClearPendingConfigWarning(sessionID: string): string | undefined {
-  const text = pendingConfigWarnings.get(sessionID);
-  pendingConfigWarnings.delete(sessionID);
-  return text;
 }
 
 let compactionReserved: number | undefined = undefined;

@@ -1,6 +1,7 @@
 import {
   findConfigMismatches,
   getAgentLargeContextModel,
+  getConfigDir,
   getRegisteredAgentNames,
   loadConfig,
   normalizeAgentName,
@@ -29,14 +30,12 @@ import {
   setLargeContextPhase,
   setModelContextLimit,
   setModelLimit,
-  setPendingConfigWarning,
   setRegisteredAgents,
   setSessionOriginalAgent,
 } from "@/state/context-state";
 import { deactivateCooldown } from "@/state/session-state";
 import { checkContextThreshold } from "@/utils/context";
 import { serializeError } from "@/utils/error";
-import { buildConfigWarningPart } from "@/utils/fallback-notification";
 import { createLogger } from "@/utils/log";
 import { formatModelKey, isSameModel } from "@/utils/model";
 import type { Logger } from "@/utils/session-utils";
@@ -45,6 +44,8 @@ import { checkForUpdates, tryInstallUpdate } from "@/utils/update-checker";
 import { version as currentVersion } from "~/package.json";
 
 import type { Hooks, PluginInput } from "@opencode-ai/plugin";
+import { writeFileSync } from "node:fs";
+import { join } from "node:path";
 
 type PluginHooks = Hooks & {
   "experimental.compaction.autocontinue"?: (
@@ -239,16 +240,45 @@ function createChatParamsHandler(
               mismatches.invalidModels.length > 0;
 
             if (hasIssues) {
-              const part = buildConfigWarningPart({
-                invalidAgents: mismatches.orphanedConfigKeys,
-                invalidModels: mismatches.invalidModels,
-                allowedAgents: opencodeAgents.map((a) => normalizeAgentName(a)),
-              });
-              setPendingConfigWarning(input.sessionID, part.text);
-              await logger.warn("Config mismatch detected (will show after response)", {
+              const logLines: string[] = [
+                "Invalid values detected in fallback.json.",
+              ];
+              if (mismatches.orphanedConfigKeys.length > 0) {
+                logLines.push(
+                  `Agents: [${mismatches.orphanedConfigKeys.join(", ")}]`,
+                );
+              }
+              if (mismatches.invalidModels.length > 0) {
+                logLines.push(
+                  `Models: [${mismatches.invalidModels.join(", ")}]`,
+                );
+              }
+              logLines.push(
+                `Allowed Agents: [${opencodeAgents.map((a) => normalizeAgentName(a)).join(", ")}]`,
+              );
+
+              const configDir = getConfigDir();
+              const logPath = join(configDir, "invalid-fallback.log");
+              try {
+                writeFileSync(logPath, `${logLines.join("\n")}\n`, "utf-8");
+              } catch {
+              }
+
+              await showToastSafely(
+                context,
+                {
+                  title: "Fallback Config Invalid",
+                  message: `fallback.json has invalid values. See: ${logPath}`,
+                  variant: "warning",
+                  duration: TOAST_DURATION_LONG_MS,
+                },
+                logger,
+              );
+              await logger.warn("Config mismatch detected", {
                 orphanedConfigKeys: mismatches.orphanedConfigKeys,
                 uncoveredAgents: mismatches.uncoveredAgents,
                 invalidModels: mismatches.invalidModels,
+                logPath,
               });
             }
           }
