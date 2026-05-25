@@ -171,74 +171,7 @@ export async function createPlugin(context: PluginInput): Promise<PluginHooks> {
   }
 
   if (Object.keys(config.agents).length > 0) {
-    (async () => {
-      try {
-        const appClient = (context.client as unknown as Record<string, unknown>).app as
-          | Record<string, unknown>
-          | undefined;
-        const agentsFn = appClient?.agents as (() => Promise<unknown>) | undefined;
-        if (!agentsFn) return;
-
-        const agentsResult = await agentsFn();
-        const opencodeAgents: string[] = Array.isArray(agentsResult)
-          ? (agentsResult as Array<{ name: string }>).map((a) => a.name)
-          : agentsResult &&
-              typeof agentsResult === "object" &&
-              Array.isArray((agentsResult as Record<string, unknown>).data)
-            ? ((agentsResult as Record<string, unknown>).data as Array<{ name: string }>).map(
-                (a) => a.name,
-              )
-            : [];
-
-        if (opencodeAgents.length === 0) return;
-
-        const mismatches = findConfigMismatches(config, opencodeAgents);
-        const hasIssues =
-          mismatches.orphanedConfigKeys.length > 0 ||
-          mismatches.uncoveredAgents.length > 0 ||
-          mismatches.invalidModels.length > 0;
-
-        if (!hasIssues) return;
-
-        const logLines: string[] = ["Invalid values detected in fallback.json."];
-        if (mismatches.orphanedConfigKeys.length > 0) {
-          logLines.push(`Agents: [${mismatches.orphanedConfigKeys.join(", ")}]`);
-        }
-        if (mismatches.invalidModels.length > 0) {
-          logLines.push(`Models: [${mismatches.invalidModels.join(", ")}]`);
-        }
-        logLines.push(
-          `Allowed Agents: [${opencodeAgents.map((a) => normalizeAgentName(a)).join(", ")}]`,
-        );
-
-        const configDir = getConfigDir();
-        const logPath = join(configDir, "invalid-fallback.log");
-        try {
-          writeFileSync(logPath, `${logLines.join("\n")}\n`, "utf-8");
-        } catch {}
-
-        await showToastSafely(
-          context,
-          {
-            title: "Fallback Config Invalid",
-            message: `fallback.json has invalid values. See: ${logPath}`,
-            variant: "warning",
-            duration: TOAST_DURATION_LONG_MS,
-          },
-          logger,
-        );
-        await logger.warn("Config mismatch detected at startup", {
-          orphanedConfigKeys: mismatches.orphanedConfigKeys,
-          uncoveredAgents: mismatches.uncoveredAgents,
-          invalidModels: mismatches.invalidModels,
-          logPath,
-        });
-      } catch (err) {
-        await logger.warn("Startup config check failed", {
-          error: serializeError(err),
-        });
-      }
-    })();
+    runConfigCheck(config, context, logger);
   }
 
   return {
@@ -510,4 +443,91 @@ function createAutocontinueHandler(
       });
     }
   };
+}
+
+const CONFIG_CHECK_INTERVAL_MS = 500;
+const CONFIG_CHECK_MAX_ATTEMPTS = 20;
+
+async function runConfigCheck(
+  config: FallbackConfig,
+  context: PluginInput,
+  logger: Logger,
+): Promise<void> {
+  for (let attempt = 0; attempt < CONFIG_CHECK_MAX_ATTEMPTS; attempt++) {
+    try {
+      const appClient = (context.client as unknown as Record<string, unknown>).app as
+        | Record<string, unknown>
+        | undefined;
+      const agentsFn = appClient?.agents as (() => Promise<unknown>) | undefined;
+      if (!agentsFn) {
+        await sleep(CONFIG_CHECK_INTERVAL_MS);
+        continue;
+      }
+
+      const agentsResult = await agentsFn();
+      const opencodeAgents: string[] = Array.isArray(agentsResult)
+        ? (agentsResult as Array<{ name: string }>).map((a) => a.name)
+        : agentsResult &&
+            typeof agentsResult === "object" &&
+            Array.isArray((agentsResult as Record<string, unknown>).data)
+          ? ((agentsResult as Record<string, unknown>).data as Array<{ name: string }>).map(
+              (a) => a.name,
+            )
+          : [];
+
+      if (opencodeAgents.length === 0) {
+        await sleep(CONFIG_CHECK_INTERVAL_MS);
+        continue;
+      }
+
+      const mismatches = findConfigMismatches(config, opencodeAgents);
+      const hasIssues =
+        mismatches.orphanedConfigKeys.length > 0 ||
+        mismatches.uncoveredAgents.length > 0 ||
+        mismatches.invalidModels.length > 0;
+
+      if (!hasIssues) return;
+
+      const logLines: string[] = ["Invalid values detected in fallback.json."];
+      if (mismatches.orphanedConfigKeys.length > 0) {
+        logLines.push(`Agents: [${mismatches.orphanedConfigKeys.join(", ")}]`);
+      }
+      if (mismatches.invalidModels.length > 0) {
+        logLines.push(`Models: [${mismatches.invalidModels.join(", ")}]`);
+      }
+      logLines.push(
+        `Allowed Agents: [${opencodeAgents.map((a) => normalizeAgentName(a)).join(", ")}]`,
+      );
+
+      const configDir = getConfigDir();
+      const logPath = join(configDir, "invalid-fallback.log");
+      try {
+        writeFileSync(logPath, `${logLines.join("\n")}\n`, "utf-8");
+      } catch {}
+
+      await showToastSafely(
+        context,
+        {
+          title: "Fallback Config Invalid",
+          message: `fallback.json has invalid values. See: ${logPath}`,
+          variant: "warning",
+          duration: TOAST_DURATION_LONG_MS,
+        },
+        logger,
+      );
+      await logger.warn("Config mismatch detected at startup", {
+        orphanedConfigKeys: mismatches.orphanedConfigKeys,
+        uncoveredAgents: mismatches.uncoveredAgents,
+        invalidModels: mismatches.invalidModels,
+        logPath,
+      });
+      return;
+    } catch {
+      await sleep(CONFIG_CHECK_INTERVAL_MS);
+    }
+  }
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
