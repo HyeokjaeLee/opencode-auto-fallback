@@ -208,7 +208,11 @@ function createChatParamsHandler(
   context: PluginInput,
 ): (input: ChatParamsInput, output: ChatParamsOutput) => Promise<void> {
   return async (input: ChatParamsInput, output: ChatParamsOutput): Promise<void> => {
-    if (input.agent && !getSessionOriginalAgent(input.sessionID)) {
+    if (
+      input.agent &&
+      isRegisteredAgent(input.agent) &&
+      !getSessionOriginalAgent(input.sessionID)
+    ) {
       setSessionOriginalAgent(input.sessionID, input.agent);
     }
 

@@ -1,4 +1,4 @@
-export const FALLBACK_MARKER = "<!-- OPENCODE_AUTO_FALLBACK -->";
+const FALLBACK_MARKER = "<!-- OPENCODE_AUTO_FALLBACK -->";
 
 export function buildFallbackNotificationPart(from: string, to: string, reason: string) {
   return {
