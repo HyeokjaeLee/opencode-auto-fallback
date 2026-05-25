@@ -221,9 +221,14 @@ function createChatParamsHandler(
             | Record<string, unknown>
             | undefined;
           const agentsResult = await (appClient?.agents as (() => Promise<unknown>) | undefined)?.();
-          const opencodeAgents: string[] =
-            agentsResult && typeof agentsResult === "object"
-              ? Object.keys(agentsResult as Record<string, unknown>)
+          const opencodeAgents: string[] = Array.isArray(agentsResult)
+            ? (agentsResult as Array<{ name: string }>).map((a) => a.name)
+            : agentsResult &&
+                typeof agentsResult === "object" &&
+                Array.isArray((agentsResult as Record<string, unknown>).data)
+              ? ((agentsResult as Record<string, unknown>).data as Array<{ name: string }>).map(
+                  (a) => a.name,
+                )
               : [];
 
           if (opencodeAgents.length > 0) {
