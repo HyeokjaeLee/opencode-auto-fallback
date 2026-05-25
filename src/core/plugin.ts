@@ -1,7 +1,9 @@
 import {
+  findConfigMismatches,
   getAgentLargeContextModel,
   getRegisteredAgentNames,
   loadConfig,
+  normalizeAgentName,
 } from "@/config/config";
 import {
   COMPACTION_FALLBACK_TOKEN_LIMIT,
@@ -17,6 +19,7 @@ import {
   getCurrentModel,
   getLargeContextPhase,
   getModelContextLimit,
+  getOpencodeAgentNames,
   getOrSetOriginalModel,
   getRecoveryModel,
   getSessionOriginalAgent,
@@ -27,12 +30,14 @@ import {
   setLargeContextPhase,
   setModelContextLimit,
   setModelLimit,
+  setOpencodeAgentNames,
   setRegisteredAgents,
   setSessionOriginalAgent,
 } from "@/state/context-state";
 import { deactivateCooldown } from "@/state/session-state";
 import { checkContextThreshold } from "@/utils/context";
 import { serializeError } from "@/utils/error";
+import { buildConfigWarningPart } from "@/utils/fallback-notification";
 import { createLogger } from "@/utils/log";
 import { formatModelKey, isSameModel } from "@/utils/model";
 import type { Logger } from "@/utils/session-utils";
@@ -167,6 +172,11 @@ export async function createPlugin(context: PluginInput): Promise<PluginHooks> {
 
   return {
     config: async (input) => {
+      const agentMap = (input as Record<string, unknown>).agent;
+      if (agentMap && typeof agentMap === "object") {
+        setOpencodeAgentNames(Object.keys(agentMap as Record<string, unknown>));
+      }
+
       const registeredNames = getRegisteredAgentNames(config);
       if (registeredNames.length === 0) return;
 
@@ -208,12 +218,40 @@ function createChatParamsHandler(
   context: PluginInput,
 ): (input: ChatParamsInput, output: ChatParamsOutput) => Promise<void> {
   return async (input: ChatParamsInput, output: ChatParamsOutput): Promise<void> => {
-    if (
-      input.agent &&
-      isRegisteredAgent(input.agent) &&
-      !getSessionOriginalAgent(input.sessionID)
-    ) {
+    if (input.agent && !getSessionOriginalAgent(input.sessionID)) {
       setSessionOriginalAgent(input.sessionID, input.agent);
+
+      const opencodeAgents = getOpencodeAgentNames();
+      if (opencodeAgents.length > 0 && Object.keys(config.agents).length > 0) {
+        const mismatches = findConfigMismatches(config, opencodeAgents);
+        const hasIssues =
+          mismatches.orphanedConfigKeys.length > 0 ||
+          mismatches.uncoveredAgents.length > 0 ||
+          mismatches.invalidModels.length > 0;
+
+        if (hasIssues) {
+          const part = buildConfigWarningPart({
+            invalidAgents: mismatches.orphanedConfigKeys,
+            invalidModels: mismatches.invalidModels,
+            allowedAgents: opencodeAgents.map((a) => normalizeAgentName(a)),
+          });
+          try {
+            await context.client.session.prompt({
+              path: { id: input.sessionID },
+              body: { noReply: true, parts: [part] },
+            });
+          } catch (err) {
+            await logger.warn("Failed to send config warning", {
+              error: serializeError(err),
+            });
+          }
+          await logger.warn("Config mismatch detected", {
+            orphanedConfigKeys: mismatches.orphanedConfigKeys,
+            uncoveredAgents: mismatches.uncoveredAgents,
+            invalidModels: mismatches.invalidModels,
+          });
+        }
+      }
     }
 
     if (input.model) {

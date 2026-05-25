@@ -88,7 +88,11 @@ export function parseModel(model: string | ResolvedModel): ResolvedModel {
 }
 
 export function normalizeAgentName(agent: string): string {
-  return agent.replace(/[\s\u200B-\u200D\uFEFF]/g, "").toLowerCase();
+  return agent
+    .replace(/[\u200B-\u200D\uFEFF]/g, "")
+    .replace(/\s+/g, "-")
+    .replace(/-+/g, "-")
+    .toLowerCase();
 }
 
 function writeDefaultConfig(configDir: string): string | null {
@@ -158,7 +162,7 @@ export function loadConfig(): FallbackConfig {
   }
 }
 
-function getAgentKey(
+export function getAgentKey(
   agents: Record<string, AgentConfig>,
   agent: string | undefined,
 ): string | undefined {
@@ -167,6 +171,128 @@ function getAgentKey(
   return Object.keys(agents).find(
     (configuredAgent) => normalizeAgentName(configuredAgent) === normalizedAgent,
   );
+}
+
+export interface ConfigMismatch {
+  orphanedConfigKeys: string[];
+  uncoveredAgents: string[];
+  invalidModels: string[];
+}
+
+interface ModelsCache {
+  [providerID: string]: {
+    models?: { [modelID: string]: unknown };
+  };
+}
+
+function loadModelsCache(): ModelsCache | null {
+  const xdgCache = process.env.XDG_CACHE_HOME ?? join(homedir(), ".cache");
+  const cachePath = join(xdgCache, "opencode", "models.json");
+  try {
+    if (!existsSync(cachePath)) return null;
+    return JSON.parse(readFileSync(cachePath, "utf-8")) as ModelsCache;
+  } catch {
+    return null;
+  }
+}
+
+function collectConfigModelStrings(config: FallbackConfig): string[] {
+  const models = new Set<string>();
+
+  function addEntry(entry: FallbackEntry): void {
+    if (typeof entry === "string") {
+      models.add(entry);
+    } else {
+      models.add(entry.model);
+    }
+  }
+
+  if (config.defaultFallback) {
+    for (const entry of config.defaultFallback) addEntry(entry);
+  }
+  if (typeof config.defaultLargeContextModel === "string") {
+    models.add(config.defaultLargeContextModel);
+  }
+
+  for (const ac of Object.values(config.agents)) {
+    if (ac.fallback) {
+      for (const entry of ac.fallback) addEntry(entry);
+    }
+    if (typeof ac.largeContextModel === "string") {
+      models.add(ac.largeContextModel);
+    }
+  }
+
+  return [...models];
+}
+
+function validateModelString(model: string, cache: ModelsCache): boolean {
+  const slashIndex = model.indexOf("/");
+  if (slashIndex === -1) return false;
+  const providerID = model.substring(0, slashIndex);
+  const modelID = model.substring(slashIndex + 1);
+  if (!providerID || !modelID) return false;
+
+  const provider = cache[providerID];
+  if (!provider?.models) return false;
+  return modelID in provider.models;
+}
+
+export function findConfigMismatches(
+  config: FallbackConfig,
+  opencodeAgents: string[],
+): ConfigMismatch {
+  const { orphanedConfigKeys, uncoveredAgents } = findAgentMismatches(config, opencodeAgents);
+
+  const invalidModels: string[] = [];
+  const cache = loadModelsCache();
+  if (cache) {
+    for (const model of collectConfigModelStrings(config)) {
+      if (!validateModelString(model, cache)) {
+        invalidModels.push(model);
+      }
+    }
+  }
+
+  return { orphanedConfigKeys, uncoveredAgents, invalidModels };
+}
+
+export function findAgentMismatches(
+  config: FallbackConfig,
+  opencodeAgents: string[],
+): { orphanedConfigKeys: string[]; uncoveredAgents: string[] } {
+  const configKeys = Object.keys(config.agents);
+  const configKeysEmpty = configKeys.length === 0;
+  const opencodeAgentsEmpty = opencodeAgents.length === 0;
+
+  if (configKeysEmpty || opencodeAgentsEmpty) {
+    return { orphanedConfigKeys: [], uncoveredAgents: [] };
+  }
+
+  const orphanedConfigKeys: string[] = [];
+  const uncoveredAgents: string[] = [];
+
+  for (const configKey of configKeys) {
+    const normalizedConfig = normalizeAgentName(configKey);
+    const hasMatch = opencodeAgents.some(
+      (opencodeAgent) => normalizeAgentName(opencodeAgent) === normalizedConfig,
+    );
+    if (!hasMatch) {
+      orphanedConfigKeys.push(configKey);
+    }
+  }
+
+  for (const opencodeAgent of opencodeAgents) {
+    const normalizedOpencode = normalizeAgentName(opencodeAgent);
+    const hasMatch = configKeys.some(
+      (configKey) => normalizeAgentName(configKey) === normalizedOpencode,
+    );
+    if (!hasMatch) {
+      uncoveredAgents.push(opencodeAgent);
+    }
+  }
+
+  return { orphanedConfigKeys, uncoveredAgents };
 }
 
 function resolveEntry(entry: FallbackEntry): FallbackModel {

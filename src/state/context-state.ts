@@ -10,6 +10,7 @@ const modelContextLimits = new Map<string, number>();
 const sessionOriginalAgent = new Map<string, string>();
 const sessionRestoreModel = new Map<string, ResolvedModel>();
 const registeredAgentSet = new Set<string>();
+const opencodeAgentNames = new Set<string>();
 
 export function setActiveFallbackParams(sessionID: string, model: FallbackModel): void {
   activeFallbackParams.set(sessionID, model);
@@ -167,6 +168,17 @@ export function isRegisteredAgent(agent: string): boolean {
 
 export function hasRegisteredAgents(): boolean {
   return registeredAgentSet.size > 0;
+}
+
+export function setOpencodeAgentNames(names: string[]): void {
+  opencodeAgentNames.clear();
+  for (const name of names) {
+    opencodeAgentNames.add(name);
+  }
+}
+
+export function getOpencodeAgentNames(): string[] {
+  return [...opencodeAgentNames];
 }
 
 let compactionReserved: number | undefined = undefined;
