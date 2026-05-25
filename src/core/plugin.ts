@@ -1,10 +1,7 @@
 import {
-  findConfigMismatches,
   getAgentLargeContextModel,
-  getConfigDir,
   getRegisteredAgentNames,
   loadConfig,
-  normalizeAgentName,
 } from "@/config/config";
 import {
   COMPACTION_FALLBACK_TOKEN_LIMIT,
@@ -44,8 +41,6 @@ import { checkForUpdates, tryInstallUpdate } from "@/utils/update-checker";
 import { version as currentVersion } from "~/package.json";
 
 import type { Hooks, PluginInput } from "@opencode-ai/plugin";
-import { writeFileSync } from "node:fs";
-import { join } from "node:path";
 
 type PluginHooks = Hooks & {
   "experimental.compaction.autocontinue"?: (
@@ -168,77 +163,6 @@ export async function createPlugin(context: PluginInput): Promise<PluginHooks> {
           error: serializeError(err),
         });
       });
-  }
-
-  if (Object.keys(config.agents).length > 0) {
-    (async () => {
-      try {
-        const appClient = (context.client as unknown as Record<string, unknown>).app as
-          | Record<string, unknown>
-          | undefined;
-        const agentsFn = appClient?.agents as (() => Promise<unknown>) | undefined;
-        if (!agentsFn) return;
-
-        const agentsResult = await agentsFn();
-        const opencodeAgents: string[] = Array.isArray(agentsResult)
-          ? (agentsResult as Array<{ name: string }>).map((a) => a.name)
-          : agentsResult &&
-              typeof agentsResult === "object" &&
-              Array.isArray((agentsResult as Record<string, unknown>).data)
-            ? ((agentsResult as Record<string, unknown>).data as Array<{ name: string }>).map(
-                (a) => a.name,
-              )
-            : [];
-
-        if (opencodeAgents.length === 0) return;
-
-        const mismatches = findConfigMismatches(config, opencodeAgents);
-        const hasIssues =
-          mismatches.orphanedConfigKeys.length > 0 ||
-          mismatches.uncoveredAgents.length > 0 ||
-          mismatches.invalidModels.length > 0;
-
-        if (!hasIssues) return;
-
-        const logLines: string[] = ["Invalid values detected in fallback.json."];
-        if (mismatches.orphanedConfigKeys.length > 0) {
-          logLines.push(`Agents: [${mismatches.orphanedConfigKeys.join(", ")}]`);
-        }
-        if (mismatches.invalidModels.length > 0) {
-          logLines.push(`Models: [${mismatches.invalidModels.join(", ")}]`);
-        }
-        logLines.push(
-          `Allowed Agents: [${opencodeAgents.map((a) => normalizeAgentName(a)).join(", ")}]`,
-        );
-
-        const configDir = getConfigDir();
-        const logPath = join(configDir, "invalid-fallback.log");
-        try {
-          writeFileSync(logPath, `${logLines.join("\n")}\n`, "utf-8");
-        } catch {}
-
-        await showToastSafely(
-          context,
-          {
-            title: "Fallback Config Invalid",
-            message: `fallback.json has invalid values. See: ${logPath}`,
-            variant: "warning",
-            duration: TOAST_DURATION_LONG_MS,
-          },
-          logger,
-        );
-        await logger.warn("Config mismatch detected at startup", {
-          orphanedConfigKeys: mismatches.orphanedConfigKeys,
-          uncoveredAgents: mismatches.uncoveredAgents,
-          invalidModels: mismatches.invalidModels,
-          logPath,
-        });
-      } catch (err) {
-        await logger.warn("Startup config check failed", {
-          error: serializeError(err),
-        });
-      }
-    })();
   }
 
   return {
