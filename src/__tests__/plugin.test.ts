@@ -171,6 +171,7 @@ describe("tryFallbackChain", () => {
     );
 
     expect(ok).toBe(false);
+    expect(mockPrompt).toHaveBeenCalledTimes(2);
     expect(noopLogger.error).toHaveBeenCalledWith(
       "All fallback models exhausted",
       expect.any(Object),

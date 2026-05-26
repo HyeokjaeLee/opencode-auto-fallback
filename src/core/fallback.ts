@@ -12,7 +12,11 @@ import {
 import { isModelInCooldown, markModelCooldown } from "@/state/provider-state";
 import { activateCooldown, incrementBackoff, resetBackoff } from "@/state/session-state";
 import { serializeError } from "@/utils/error";
-import { buildFallbackNotificationPart, buildSyntheticContinuationPart } from "@/utils/fallback-notification";
+import {
+  buildExhaustedNotificationPart,
+  buildFallbackNotificationPart,
+  buildSyntheticContinuationPart,
+} from "@/utils/fallback-notification";
 import { formatModelKey } from "@/utils/model";
 import type { Logger } from "@/utils/session-utils";
 import { abortSession } from "@/utils/session-utils";
@@ -107,9 +111,8 @@ export async function tryFallbackChain(
       body: {
         noReply: true,
         parts: [
-          buildFallbackNotificationPart(
+          buildExhaustedNotificationPart(
             fromModel ? formatModelKey(fromModel) : "unknown",
-            "—",
             "All fallback models exhausted",
           ),
         ],
