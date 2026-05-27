@@ -1,5 +1,5 @@
 import { getFallbackChain } from "@/config/config";
-import { BACKOFF_BASE_MS, LARGE_CONTEXT_CONTINUATION } from "@/config/constants";
+import { BACKOFF_BASE_MS, LARGE_CONTEXT_CONTINUATION, TOAST_DURATION_MS } from "@/config/constants";
 import type { FallbackConfig, FallbackModel } from "@/config/types";
 import {
   deleteLargeContextPhase,
@@ -12,14 +12,10 @@ import {
 import { isModelInCooldown, markModelCooldown } from "@/state/provider-state";
 import { activateCooldown, incrementBackoff, resetBackoff } from "@/state/session-state";
 import { serializeError } from "@/utils/error";
-import {
-  buildExhaustedNotificationPart,
-  buildFallbackNotificationPart,
-  buildSyntheticContinuationPart,
-} from "@/utils/fallback-notification";
+import { buildSyntheticContinuationPart } from "@/utils/fallback-notification";
 import { formatModelKey } from "@/utils/model";
 import type { Logger } from "@/utils/session-utils";
-import { abortSession } from "@/utils/session-utils";
+import { abortSession, showToastSafely } from "@/utils/session-utils";
 
 import type { PluginInput } from "@opencode-ai/plugin";
 
@@ -34,15 +30,24 @@ export async function fallbackToModel(
 ): Promise<boolean> {
   try {
     setActiveFallbackParams(sessionID, toModel);
+    if (fromModel) {
+      await showToastSafely(
+        context,
+        {
+          title: reason,
+          message: `${formatModelKey(fromModel)} → ${formatModelKey(toModel)}`,
+          variant: "info",
+          duration: TOAST_DURATION_MS,
+        },
+        logger,
+      );
+    }
     await context.client.session.prompt({
       path: { id: sessionID },
       body: {
         model: { providerID: toModel.providerID, modelID: toModel.modelID },
         agent,
         parts: [
-          ...(fromModel
-            ? [buildFallbackNotificationPart(formatModelKey(fromModel), formatModelKey(toModel), reason)]
-            : []),
           buildSyntheticContinuationPart(LARGE_CONTEXT_CONTINUATION),
         ],
         ...(toModel.variant ? { variant: toModel.variant } : {}),
@@ -105,20 +110,16 @@ export async function tryFallbackChain(
       return true;
     }
   }
-  try {
-    await context.client.session.prompt({
-      path: { id: sessionID },
-      body: {
-        noReply: true,
-        parts: [
-          buildExhaustedNotificationPart(
-            fromModel ? formatModelKey(fromModel) : "unknown",
-            "All fallback models exhausted",
-          ),
-        ],
-      },
-    });
-  } catch {}
+  await showToastSafely(
+    context,
+    {
+      title: "All fallback models exhausted",
+      message: fromModel ? formatModelKey(fromModel) : "unknown",
+      variant: "warning",
+      duration: TOAST_DURATION_MS * 2,
+    },
+    logger,
+  );
   await logger.error("All fallback models exhausted", {
     sessionID,
     chainLength: chain.length,

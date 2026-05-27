@@ -171,7 +171,7 @@ describe("tryFallbackChain", () => {
     );
 
     expect(ok).toBe(false);
-    expect(mockPrompt).toHaveBeenCalledTimes(2);
+    expect(mockPrompt).toHaveBeenCalledTimes(1);
     expect(noopLogger.error).toHaveBeenCalledWith(
       "All fallback models exhausted",
       expect.any(Object),
@@ -308,10 +308,9 @@ describe("fallbackToModel", () => {
         body: expect.objectContaining({
           model: { providerID: "openai", modelID: "gpt-5.4" },
           agent: "oracle",
-          parts: expect.arrayContaining([
-            expect.objectContaining({ type: "text", ignored: true }),
+          parts: [
             expect.objectContaining({ type: "text", synthetic: true, text: "Continue" }),
-          ]),
+          ],
         }),
       }),
     );

@@ -1,21 +1,3 @@
-const FALLBACK_MARKER = "<!-- OPENCODE_AUTO_FALLBACK -->";
-
-export function buildFallbackNotificationPart(from: string, to: string, reason: string) {
-  return {
-    type: "text" as const,
-    text: `[${from} -> ${to} / ${reason}]\n${FALLBACK_MARKER}`,
-    ignored: true,
-  };
-}
-
-export function buildExhaustedNotificationPart(from: string, reason: string) {
-  return {
-    type: "text" as const,
-    text: `[${from} / ${reason}]\n${FALLBACK_MARKER}`,
-    ignored: true,
-  };
-}
-
 export function buildSyntheticContinuationPart(text: string) {
   return {
     type: "text" as const,
