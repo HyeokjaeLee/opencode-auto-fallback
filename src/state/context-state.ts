@@ -152,6 +152,7 @@ export function cleanupSession(sessionID: string): void {
   sessionOriginalAgent.delete(sessionID);
   sessionRestoreModel.delete(sessionID);
   compactionTarget.delete(sessionID);
+  opencodeCompacting.delete(sessionID);
 }
 
 export function setRegisteredAgents(agents: string[]): void {
@@ -196,4 +197,18 @@ export function getAndClearCompactionTarget(sessionID: string): "large" | "defau
 
 export function clearCompactionTarget(sessionID: string): void {
   compactionTarget.delete(sessionID);
+}
+
+const opencodeCompacting = new Set<string>();
+
+export function setOpencodeCompacting(sessionID: string): void {
+  opencodeCompacting.add(sessionID);
+}
+
+export function clearOpencodeCompacting(sessionID: string): void {
+  opencodeCompacting.delete(sessionID);
+}
+
+export function isOpencodeCompacting(sessionID: string): boolean {
+  return opencodeCompacting.has(sessionID);
 }

@@ -24,9 +24,9 @@ import {
   isRegisteredAgent,
   setCompactionReserved,
   setCurrentModel,
-  setLargeContextPhase,
   setModelContextLimit,
   setModelLimit,
+  setOpencodeCompacting,
   setRegisteredAgents,
   setSessionOriginalAgent,
 } from "@/state/context-state";
@@ -390,21 +390,10 @@ function createCompactingHandler(
           largeLimit,
         });
       } else {
-        const original = getRecoveryModel(input.sessionID);
-        if (original) {
-          const originalLimit = getModelContextLimit(formatModelKey(original));
-          output.context.push(
-            originalLimit
-              ? `The compacted summary must fit within ${originalLimit} tokens because the session will return to the original model (${formatModelKey(original)}). Produce a concise summary preserving only: the user's original request, key files changed, critical decisions, and current status. Discard verbatim conversation.`
-              : `The session will return to the original model (${formatModelKey(original)}) after compaction. Produce a concise summary preserving: user request, key files, decisions, and status. Discard verbatim conversation.`,
-          );
-          await logger.info("Compacting: /compact — appended original model context", {
-            sessionID: input.sessionID,
-            originalModel: formatModelKey(original),
-            originalLimit,
-          });
-        }
-        setLargeContextPhase(input.sessionID, "summarizing");
+        setOpencodeCompacting(input.sessionID);
+        await logger.info("Compacting: opencode/internal compaction during active phase — waiting", {
+          sessionID: input.sessionID,
+        });
       }
       return;
     }

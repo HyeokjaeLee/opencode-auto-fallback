@@ -2,7 +2,11 @@ import { LARGE_CONTEXT_CONTINUATION } from "@/config/constants";
 import { getAgentLargeContextModel } from "@/config/config";
 import type { FallbackConfig } from "@/config/types";
 import { handleLargeContextCompletion } from "@/core/large-context";
-import { getLargeContextPhase, getSessionOriginalAgent } from "@/state/context-state";
+import {
+  clearOpencodeCompacting,
+  getLargeContextPhase,
+  getSessionOriginalAgent,
+} from "@/state/context-state";
 import { serializeError } from "@/utils/error";
 import { buildSyntheticContinuationPart } from "@/utils/fallback-notification";
 import type { Logger } from "@/utils/session-utils";
@@ -21,6 +25,8 @@ export async function handleSessionCompacted(
     sessionID: props.sessionID,
     phase,
   });
+
+  clearOpencodeCompacting(props.sessionID);
 
   if (phase === "summarizing") {
     const agent = getSessionOriginalAgent(props.sessionID);

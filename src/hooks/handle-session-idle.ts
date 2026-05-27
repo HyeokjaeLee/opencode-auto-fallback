@@ -16,6 +16,7 @@ import {
   hasRegisteredAgents,
   getModelContextLimit,
   setSessionOriginalAgent,
+  isOpencodeCompacting,
 } from "@/state/context-state";
 import { isModelInCooldown } from "@/state/provider-state";
 import { checkContextThreshold } from "@/utils/context";
@@ -138,6 +139,13 @@ export async function handleSessionIdle(
   }
 
   if (phase === "active") {
+    if (isOpencodeCompacting(props.sessionID)) {
+      await logger.info("Idle: opencode compaction in progress — waiting for compacted event", {
+        sessionID: props.sessionID,
+      });
+      return;
+    }
+
     const activeParsedModel = agent ? getAgentLargeContextModel(config, agent) : null;
     if (!activeParsedModel) {
       await logger.info("Idle: active — no large context model, clearing phase", {
@@ -182,7 +190,8 @@ export async function handleSessionIdle(
       const lastAsst = [...raw].reverse().find((m) => m.info.role === "assistant");
       if (lastAsst) {
         autoContinuePending = lastAsst.parts.some(
-          (p) => p.type === "tool" && p.state?.status !== "completed",
+          (p) =>
+            p.type === "tool" && (p.state?.status === "pending" || p.state?.status === "running"),
         );
       }
     } catch {
