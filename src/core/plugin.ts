@@ -364,7 +364,9 @@ function createCompactingHandler(
         const targetTokens = originalLimit
           ? Math.floor(originalLimit * 0.2)
           : COMPACTION_FALLBACK_TOKEN_LIMIT;
-        output.context.push(`Reduce to at most ${targetTokens} tokens.`);
+        output.context.push(
+          `Reduce to at most ${targetTokens} tokens. Do NOT invoke any tools or function calls — produce only a plain text summary.`,
+        );
         await logger.info("Compacting: summarizing — appended original model context", {
           sessionID: input.sessionID,
           originalModel: formatModelKey(original),

@@ -9,6 +9,9 @@ import {
 import { handleRetry, handleImmediate } from "@/core/fallback";
 import { handleLargeContextSwitch } from "@/core/large-context";
 import {
+  clearActiveFallbackParams,
+  deleteLargeContextPhase,
+  deleteRestoreModel,
   getCurrentModel,
   getLargeContextPhase,
   setCompactionTarget,
@@ -128,6 +131,42 @@ export async function handleSessionError(
       sessionID,
       message: err.data.message,
     });
+    return;
+  }
+
+  const phase = getLargeContextPhase(sessionID);
+  if (
+    phase === "summarizing" &&
+    err.data.message?.includes("Tool call not allowed while generating summary")
+  ) {
+    const agent = getSessionOriginalAgent(sessionID);
+    const parsedModel = agent ? getAgentLargeContextModel(config, agent) : null;
+    if (parsedModel) {
+      await logger.info("Compaction tool call blocked, retrying summarize", {
+        sessionID,
+        model: `${parsedModel.providerID}/${parsedModel.modelID}`,
+      });
+      try {
+        await context.client.session.summarize({
+          path: { id: sessionID },
+          body: {
+            providerID: parsedModel.providerID,
+            modelID: parsedModel.modelID,
+          },
+        });
+      } catch (retryErr) {
+        await logger.warn("Compaction retry failed, clearing phase", {
+          sessionID,
+          error: String(retryErr),
+        });
+        deleteLargeContextPhase(sessionID);
+        clearActiveFallbackParams(sessionID);
+        deleteRestoreModel(sessionID);
+      }
+    } else {
+      await logger.warn("Compaction failed but no model to retry, clearing phase", { sessionID });
+      deleteLargeContextPhase(sessionID);
+    }
     return;
   }
 
