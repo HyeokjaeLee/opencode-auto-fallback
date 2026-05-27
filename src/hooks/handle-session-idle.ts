@@ -22,7 +22,7 @@ import { isModelInCooldown } from "@/state/provider-state";
 import { checkContextThreshold } from "@/utils/context";
 import { formatModelKey, isSameModel } from "@/utils/model";
 import type { Logger } from "@/utils/session-utils";
-import { fetchSessionData } from "@/utils/session-utils";
+import { abortSessionSafely, fetchSessionData } from "@/utils/session-utils";
 
 import type { PluginInput } from "@opencode-ai/plugin";
 
@@ -162,6 +162,8 @@ export async function handleSessionIdle(
       });
       setCompactionTarget(props.sessionID, "large");
       try {
+        await abortSessionSafely(props.sessionID, context);
+
         await context.client.session.summarize({
           path: { id: props.sessionID },
           body: {

@@ -20,7 +20,11 @@ import { serializeError } from "@/utils/error";
 import { buildSyntheticContinuationPart } from "@/utils/fallback-notification";
 import { formatModelKey } from "@/utils/model";
 import type { Logger } from "@/utils/session-utils";
-import { fetchSessionData, showToastSafely } from "@/utils/session-utils";
+import {
+  abortSessionSafely,
+  fetchSessionData,
+  showToastSafely,
+} from "@/utils/session-utils";
 
 import type { PluginInput } from "@opencode-ai/plugin";
 
@@ -154,6 +158,8 @@ export async function handleLargeContextReturn(
   setLargeContextPhase(sessionID, "summarizing");
 
   try {
+    await abortSessionSafely(sessionID, context);
+
     await context.client.session.summarize({
       path: { id: sessionID },
       body: {

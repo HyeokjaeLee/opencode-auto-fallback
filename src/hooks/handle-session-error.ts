@@ -142,11 +142,13 @@ export async function handleSessionError(
     const agent = getSessionOriginalAgent(sessionID);
     const parsedModel = agent ? getAgentLargeContextModel(config, agent) : null;
     if (parsedModel) {
-      await logger.info("Compaction tool call blocked, retrying summarize", {
+      await logger.info("Compaction tool call blocked, aborting and retrying summarize", {
         sessionID,
         model: `${parsedModel.providerID}/${parsedModel.modelID}`,
       });
       try {
+        await abortSessionSafely(sessionID, context);
+
         await context.client.session.summarize({
           path: { id: sessionID },
           body: {
