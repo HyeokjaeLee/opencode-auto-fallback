@@ -1,6 +1,8 @@
 import { LARGE_CONTEXT_CONTINUATION } from "@/config/constants";
+import { getAgentLargeContextModel } from "@/config/config";
 import type { FallbackConfig } from "@/config/types";
-import { getLargeContextPhase } from "@/state/context-state";
+import { handleLargeContextCompletion } from "@/core/large-context";
+import { getLargeContextPhase, getSessionOriginalAgent } from "@/state/context-state";
 import { serializeError } from "@/utils/error";
 import { buildSyntheticContinuationPart } from "@/utils/fallback-notification";
 import type { Logger } from "@/utils/session-utils";
@@ -8,7 +10,7 @@ import type { Logger } from "@/utils/session-utils";
 import type { PluginInput } from "@opencode-ai/plugin";
 
 export async function handleSessionCompacted(
-  _config: FallbackConfig,
+  config: FallbackConfig,
   logger: Logger,
   context: PluginInput,
   event: { type: string; properties: unknown },
@@ -21,9 +23,14 @@ export async function handleSessionCompacted(
   });
 
   if (phase === "summarizing") {
-    await logger.info("Compacted: summarizing complete, next idle will switch back", {
-      sessionID: props.sessionID,
-    });
+    const agent = getSessionOriginalAgent(props.sessionID);
+    if (agent && getAgentLargeContextModel(config, agent)) {
+      await handleLargeContextCompletion(props.sessionID, context, logger);
+    } else {
+      await logger.info("Compacted: summarizing but no agent/largeModel — clearing phase", {
+        sessionID: props.sessionID,
+      });
+    }
     return;
   }
 

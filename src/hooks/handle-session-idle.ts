@@ -3,7 +3,6 @@ import type { FallbackConfig } from "@/config/types";
 import {
   handleLargeContextSwitch,
   handleLargeContextReturn,
-  handleLargeContextCompletion,
   shouldSkipLargeContextFallback,
 } from "@/core/large-context";
 import {
@@ -183,8 +182,7 @@ export async function handleSessionIdle(
       const lastAsst = [...raw].reverse().find((m) => m.info.role === "assistant");
       if (lastAsst) {
         autoContinuePending = lastAsst.parts.some(
-          (p) =>
-            p.type === "tool" && (p.state?.status === "pending" || p.state?.status === "running"),
+          (p) => p.type === "tool" && p.state?.status !== "completed",
         );
       }
     } catch {
@@ -195,7 +193,7 @@ export async function handleSessionIdle(
       await logger.info("Idle: return condition met (no pending tools)", {
         sessionID: props.sessionID,
       });
-      await handleLargeContextReturn(props.sessionID, context, logger);
+      await handleLargeContextReturn(props.sessionID, config, context, logger);
       return;
     }
     await logger.info("Idle: return waiting — pending tool calls in last response", {
@@ -204,7 +202,10 @@ export async function handleSessionIdle(
     return;
   }
 
-  if (agent && getAgentLargeContextModel(config, agent)) {
-    await handleLargeContextCompletion(props.sessionID, context, logger);
+  if (phase === "summarizing") {
+    await logger.info("Idle: summarizing — waiting for compacted event to trigger switch-back", {
+      sessionID: props.sessionID,
+    });
+    return;
   }
 }

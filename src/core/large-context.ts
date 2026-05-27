@@ -1,5 +1,6 @@
 import { LARGE_CONTEXT_CONTINUATION, RETURN_CONTINUATION } from "@/config/constants";
-import type { ResolvedModel } from "@/config/types";
+import { getAgentLargeContextModel } from "@/config/config";
+import type { FallbackConfig, ResolvedModel } from "@/config/types";
 import {
   clearActiveFallbackParams,
   deleteLargeContextPhase,
@@ -120,6 +121,7 @@ export async function handleLargeContextSwitch(
 
 export async function handleLargeContextReturn(
   sessionID: string,
+  config: FallbackConfig,
   context: PluginInput,
   logger: Logger,
 ): Promise<void> {
@@ -133,8 +135,9 @@ export async function handleLargeContextReturn(
     return;
   }
 
-  const current = getCurrentModel(sessionID);
-  const compactModel = current ?? original;
+  const agent = getSessionOriginalAgent(sessionID);
+  const largeModel = agent ? getAgentLargeContextModel(config, agent) : null;
+  const compactModel = largeModel ?? original;
 
   await logger.info("Return condition: compacting with large model for switch-back", {
     sessionID,

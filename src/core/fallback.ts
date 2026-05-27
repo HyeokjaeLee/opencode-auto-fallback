@@ -133,8 +133,8 @@ export async function handleRetry(
   context: PluginInput,
 ): Promise<void> {
   const phase = getLargeContextPhase(sessionID);
-  if (phase === "active" || phase === "pending") {
-    await logger.info("Skipping retry — large context model active", {
+  if (phase === "active" || phase === "pending" || phase === "summarizing") {
+    await logger.info("Skipping retry — large context phase active", {
       sessionID,
       phase,
     });
@@ -183,7 +183,7 @@ export async function handleRetry(
   }
   const chain = await getValidatedFallbackChain(config, agent, sessionID, logger);
   if (chain.length === 0) return;
-  await tryFallbackChain(sessionID, chain, agent, currentModel, "Retries exhausted", logger, context);
+  await tryFallbackChain(sessionID, chain, agent, currentModel ?? null, "Retries exhausted", logger, context);
 }
 
 export async function handleImmediate(
@@ -193,8 +193,8 @@ export async function handleImmediate(
   context: PluginInput,
 ): Promise<void> {
   const phase = getLargeContextPhase(sessionID);
-  if (phase === "active" || phase === "pending") {
-    await logger.info("Skipping fallback — large context model active", {
+  if (phase === "active" || phase === "pending" || phase === "summarizing") {
+    await logger.info("Skipping fallback — large context phase active", {
       sessionID,
       phase,
     });
@@ -220,5 +220,5 @@ export async function handleImmediate(
     sessionID,
   });
   if (chain.length === 0) return;
-  await tryFallbackChain(sessionID, chain, agent, currentModel, "Immediate fallback", logger, context);
+  await tryFallbackChain(sessionID, chain, agent, currentModel ?? null, "Immediate fallback", logger, context);
 }

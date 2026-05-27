@@ -430,11 +430,18 @@ function createAutocontinueHandler(
       });
       return;
     }
-    if (phase === "active" || phase === "summarizing") {
+    if (phase === "active") {
       output.enabled = true;
-      await logger.info("Autocontinue: enabled (large context phase)", {
+      await logger.info("Autocontinue: enabled (large context phase active)", {
         sessionID: input.sessionID,
         phase,
+      });
+      return;
+    }
+    if (phase === "summarizing") {
+      output.enabled = false;
+      await logger.info("Autocontinue: suppressed (phase=summarizing, waiting for compacted event)", {
+        sessionID: input.sessionID,
       });
     }
   };
