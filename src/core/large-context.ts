@@ -14,6 +14,7 @@ import {
   setActiveFallbackParams,
   setLargeContextPhase,
   setRestoreModel,
+  setTuiOverrideModel,
 } from "@/state/context-state";
 import { isModelInCooldown } from "@/state/provider-state";
 import { serializeError } from "@/utils/error";
@@ -80,6 +81,11 @@ export async function handleLargeContextSwitch(
     }
 
     setActiveFallbackParams(sessionID, {
+      providerID: largeModel.providerID,
+      modelID: largeModel.modelID,
+    });
+
+    setTuiOverrideModel(sessionID, {
       providerID: largeModel.providerID,
       modelID: largeModel.modelID,
     });
@@ -202,6 +208,11 @@ export async function handleLargeContextCompletion(
 
   deleteLargeContextPhase(sessionID);
   deleteRestoreModel(sessionID);
+
+  setTuiOverrideModel(sessionID, {
+    providerID: original.providerID,
+    modelID: original.modelID,
+  });
 
   await showToastSafely(
     context,

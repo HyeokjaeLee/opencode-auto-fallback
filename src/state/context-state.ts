@@ -1,6 +1,10 @@
 import { normalizeAgentName } from "@/config/config";
 import type { FallbackModel, LargeContextPhase, ResolvedModel } from "@/config/types";
 
+const tuiOverrideModel = new Map<
+  string,
+  { providerID: string; modelID: string; variant?: string }
+>();
 const activeFallbackParams = new Map<string, FallbackModel>();
 const largeContextSessions = new Map<string, { providerID: string; modelID: string }>();
 const currentModelSessions = new Map<string, { providerID: string; modelID: string }>();
@@ -10,6 +14,23 @@ const modelContextLimits = new Map<string, number>();
 const sessionOriginalAgent = new Map<string, string>();
 const sessionRestoreModel = new Map<string, ResolvedModel>();
 const registeredAgentSet = new Set<string>();
+
+export function setTuiOverrideModel(
+  sessionID: string,
+  model: { providerID: string; modelID: string; variant?: string },
+): void {
+  tuiOverrideModel.set(sessionID, model);
+}
+
+export function getTuiOverrideModel(
+  sessionID: string,
+): { providerID: string; modelID: string; variant?: string } | undefined {
+  return tuiOverrideModel.get(sessionID);
+}
+
+export function clearTuiOverrideModel(sessionID: string): void {
+  tuiOverrideModel.delete(sessionID);
+}
 
 export function setActiveFallbackParams(sessionID: string, model: FallbackModel): void {
   activeFallbackParams.set(sessionID, model);
@@ -153,6 +174,7 @@ export function cleanupSession(sessionID: string): void {
   sessionRestoreModel.delete(sessionID);
   compactionTarget.delete(sessionID);
   opencodeCompacting.delete(sessionID);
+  tuiOverrideModel.delete(sessionID);
 }
 
 export function setRegisteredAgents(agents: string[]): void {

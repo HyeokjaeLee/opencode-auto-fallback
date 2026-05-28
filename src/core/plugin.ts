@@ -20,6 +20,7 @@ import {
   getOrSetOriginalModel,
   getRecoveryModel,
   getSessionOriginalAgent,
+  getTuiOverrideModel,
   hasModelChanged,
   isRegisteredAgent,
   setCompactionReserved,
@@ -193,6 +194,21 @@ export async function createPlugin(context: PluginInput): Promise<PluginHooks> {
     },
 
     "chat.params": createChatParamsHandler(config, logger, context),
+
+    // eslint-disable-next-line @typescript-eslint/require-await
+    "chat.message": async (
+      input: { sessionID?: string },
+      output: { message: Record<string, unknown> },
+    ): Promise<void> => {
+      const sid = input.sessionID;
+      if (!sid) return;
+      const override = getTuiOverrideModel(sid);
+      if (!override) return;
+      output.message["model"] = { providerID: override.providerID, modelID: override.modelID };
+      if (override.variant !== undefined) {
+        output.message["variant"] = override.variant;
+      }
+    },
 
     "experimental.session.compacting": createCompactingHandler(config, logger),
 

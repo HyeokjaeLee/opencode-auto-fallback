@@ -8,6 +8,7 @@ import {
   getSessionOriginalAgent,
   setActiveFallbackParams,
   setSessionCooldownModel,
+  setTuiOverrideModel,
 } from "@/state/context-state";
 import { isModelInCooldown, markModelCooldown } from "@/state/provider-state";
 import { activateCooldown, incrementBackoff, resetBackoff } from "@/state/session-state";
@@ -30,6 +31,7 @@ export async function fallbackToModel(
 ): Promise<boolean> {
   try {
     setActiveFallbackParams(sessionID, toModel);
+    setTuiOverrideModel(sessionID, toModel);
     if (fromModel) {
       await showToastSafely(
         context,
