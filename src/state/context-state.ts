@@ -84,19 +84,13 @@ export function getModelContextLimit(modelKey: string): number | undefined {
 }
 
 const modelInputLimits = new Map<string, number>();
-const modelOutputLimits = new Map<string, number>();
 
 export function setModelLimit(modelKey: string, type: "input" | "output", limit: number): void {
   if (type === "input") modelInputLimits.set(modelKey, limit);
-  else modelOutputLimits.set(modelKey, limit);
 }
 
 export function getModelInputLimit(modelKey: string): number | undefined {
   return modelInputLimits.get(modelKey);
-}
-
-export function getModelOutputLimit(modelKey: string): number | undefined {
-  return modelOutputLimits.get(modelKey);
 }
 
 export function setSessionCooldownModel(
@@ -129,10 +123,6 @@ export function getSessionOriginalAgent(sessionID: string): string | undefined {
 
 export function setRestoreModel(sessionID: string, providerID: string, modelID: string): void {
   sessionRestoreModel.set(sessionID, { providerID, modelID });
-}
-
-export function getRestoreModel(sessionID: string): ResolvedModel | undefined {
-  return sessionRestoreModel.get(sessionID);
 }
 
 export function getRecoveryModel(sessionID: string): ResolvedModel | undefined {
@@ -168,16 +158,6 @@ export function isRegisteredAgent(agent: string): boolean {
 
 export function hasRegisteredAgents(): boolean {
   return registeredAgentSet.size > 0;
-}
-
-let compactionReserved: number | undefined = undefined;
-
-export function setCompactionReserved(v: number | undefined): void {
-  compactionReserved = v;
-}
-
-export function getCompactionReserved(): number | undefined {
-  return compactionReserved;
 }
 
 // Distinguishes manual /compact from our internal session.summarize() calls

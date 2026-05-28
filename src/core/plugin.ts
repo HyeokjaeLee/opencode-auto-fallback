@@ -1,8 +1,5 @@
-import {
-  getAgentLargeContextModel,
-  getRegisteredAgentNames,
-  loadConfig,
-} from "@/config/config";
+import type { Hooks, PluginInput } from "@opencode-ai/plugin";
+import { getAgentLargeContextModel, getRegisteredAgentNames, loadConfig } from "@/config/config";
 import {
   COMPACTION_FALLBACK_TOKEN_LIMIT,
   TOAST_DURATION_LONG_MS,
@@ -22,7 +19,6 @@ import {
   getSessionOriginalAgent,
   hasModelChanged,
   isRegisteredAgent,
-  setCompactionReserved,
   setCurrentModel,
   setModelContextLimit,
   setModelLimit,
@@ -39,8 +35,6 @@ import type { Logger } from "@/utils/session-utils";
 import { abortSessionSafely, showToastSafely } from "@/utils/session-utils";
 import { checkForUpdates, tryInstallUpdate } from "@/utils/update-checker";
 import { version as currentVersion } from "~/package.json";
-
-import type { Hooks, PluginInput } from "@opencode-ai/plugin";
 
 type PluginHooks = Hooks & {
   "experimental.compaction.autocontinue"?: (
@@ -175,12 +169,6 @@ export async function createPlugin(context: PluginInput): Promise<PluginHooks> {
       const existingCompaction = (input as Record<string, unknown>).compaction as
         | { reserved?: number; auto?: boolean }
         | undefined;
-      if (existingCompaction?.reserved !== undefined) {
-        setCompactionReserved(existingCompaction.reserved);
-        await logger.info("Config: captured compaction.reserved", {
-          reserved: existingCompaction.reserved,
-        });
-      }
       const compaction = existingCompaction ?? {};
       (input as Record<string, unknown>).compaction = compaction;
       compaction.auto = false;
@@ -243,7 +231,10 @@ function createChatParamsHandler(
               lcfParsed &&
               (phase === "active" || phase === "pending") &&
               isSameModel(prev, lcfParsed) &&
-              !isSameModel({ providerID: input.model.providerID, modelID: input.model.id }, lcfParsed)
+              !isSameModel(
+                { providerID: input.model.providerID, modelID: input.model.id },
+                lcfParsed,
+              )
             ) {
               await logger.info("Model changed from large model, aborting generation", {
                 sessionID: input.sessionID,
@@ -393,9 +384,12 @@ function createCompactingHandler(
         });
       } else {
         setOpencodeCompacting(input.sessionID);
-        await logger.info("Compacting: opencode/internal compaction during active phase — waiting", {
-          sessionID: input.sessionID,
-        });
+        await logger.info(
+          "Compacting: opencode/internal compaction during active phase — waiting",
+          {
+            sessionID: input.sessionID,
+          },
+        );
       }
       return;
     }
@@ -431,9 +425,12 @@ function createAutocontinueHandler(
     }
     if (phase === "summarizing") {
       output.enabled = false;
-      await logger.info("Autocontinue: suppressed (phase=summarizing, waiting for compacted event)", {
-        sessionID: input.sessionID,
-      });
+      await logger.info(
+        "Autocontinue: suppressed (phase=summarizing, waiting for compacted event)",
+        {
+          sessionID: input.sessionID,
+        },
+      );
     }
   };
 }
