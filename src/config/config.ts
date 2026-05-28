@@ -194,14 +194,13 @@ export function getFallbackChain(
   agent: string | undefined,
 ): FallbackModel[] {
   const agentKey = getAgentKey(config.agents, agent);
-  const agentHasExplicitFallback = agentKey && config.agents[agentKey].fallback !== undefined;
 
-  if (!agentHasExplicitFallback) {
+  if (!agentKey || config.agents[agentKey].fallback === undefined) {
     if (!config.defaultFallback?.length) return [];
     return config.defaultFallback.map(resolveEntry);
   }
 
-  return config.agents[agentKey!].fallback!.map(resolveEntry);
+  return config.agents[agentKey].fallback.map(resolveEntry);
 }
 
 export function getAgentLargeContextModel(
@@ -228,7 +227,7 @@ export function getAgentMinContextRatio(config: FallbackConfig, agent: string | 
   if (agent) {
     const agentKey = getAgentKey(config.agents, agent);
     if (agentKey && config.agents[agentKey].minContextRatio !== undefined) {
-      return config.agents[agentKey].minContextRatio!;
+      return config.agents[agentKey].minContextRatio;
     }
   }
   return config.defaultMinContextRatio;

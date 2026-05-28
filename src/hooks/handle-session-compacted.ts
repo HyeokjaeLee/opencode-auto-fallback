@@ -1,5 +1,6 @@
-import { LARGE_CONTEXT_CONTINUATION } from "@/config/constants";
+import type { PluginInput } from "@opencode-ai/plugin";
 import { getAgentLargeContextModel } from "@/config/config";
+import { LARGE_CONTEXT_CONTINUATION } from "@/config/constants";
 import type { FallbackConfig } from "@/config/types";
 import { handleLargeContextCompletion } from "@/core/large-context";
 import {
@@ -10,8 +11,6 @@ import {
 import { serializeError } from "@/utils/error";
 import { buildSyntheticContinuationPart } from "@/utils/fallback-notification";
 import type { Logger } from "@/utils/session-utils";
-
-import type { PluginInput } from "@opencode-ai/plugin";
 
 export async function handleSessionCompacted(
   config: FallbackConfig,

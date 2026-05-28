@@ -15,22 +15,23 @@ export interface FallbackModel extends ResolvedModel {
   };
 }
 
-export interface FallbackModelEntry {
-  model: string;
-  variant?: string;
-  reasoningEffort?: "none" | "minimal" | "low" | "medium" | "high" | "xhigh";
-  temperature?: number;
-  topP?: number;
-  maxTokens?: number;
-  thinking?: {
-    type: "enabled" | "disabled";
-    budgetTokens?: number;
-  };
-}
-
-export type FallbackEntry = string | FallbackModelEntry;
-
+/** @deprecated Unused. Kept for API compatibility. */
 export type ErrorClass = "immediate" | "retry" | "ignore";
+
+export type FallbackEntry =
+  | string
+  | {
+      model: string;
+      variant?: string;
+      reasoningEffort?: "none" | "minimal" | "low" | "medium" | "high" | "xhigh";
+      temperature?: number;
+      topP?: number;
+      maxTokens?: number;
+      thinking?: { type: "enabled" | "disabled"; budgetTokens?: number };
+    };
+
+/** @deprecated Unused. Kept for API compatibility. */
+export type FallbackModelEntry = Extract<FallbackEntry, { model: string }>;
 
 export interface FallbackDecision {
   action: ErrorClass;

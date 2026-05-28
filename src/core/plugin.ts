@@ -21,7 +21,7 @@ import {
   isRegisteredAgent,
   setCurrentModel,
   setModelContextLimit,
-  setModelLimit,
+  setModelInputLimit,
   setOpencodeCompacting,
   setRegisteredAgents,
   setSessionOriginalAgent,
@@ -264,10 +264,8 @@ function createChatParamsHandler(
         const rawLimit = input.model.limit as {
           context: number;
           input?: number;
-          output: number;
         };
-        if (rawLimit.input !== undefined) setModelLimit(modelKey, "input", rawLimit.input);
-        setModelLimit(modelKey, "output", rawLimit.output);
+        if (rawLimit.input !== undefined) setModelInputLimit(modelKey, rawLimit.input);
         if (changed) {
           await logger.info("Detected model context limit", {
             sessionID: input.sessionID,

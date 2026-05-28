@@ -308,9 +308,7 @@ describe("fallbackToModel", () => {
         body: expect.objectContaining({
           model: { providerID: "openai", modelID: "gpt-5.4" },
           agent: "oracle",
-          parts: [
-            expect.objectContaining({ type: "text", synthetic: true, text: "Continue" }),
-          ],
+          parts: [expect.objectContaining({ type: "text", synthetic: true, text: "Continue" })],
         }),
       }),
     );

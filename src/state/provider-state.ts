@@ -23,10 +23,6 @@ export function isModelInCooldown(providerID: string, modelID: string): boolean 
   return false;
 }
 
-export function getCooldownExpiry(providerID: string, modelID: string): number | undefined {
-  return cooldownExpiry.get(modelKey(providerID, modelID));
-}
-
 export function cleanupExpired(): number {
   let removed = 0;
   const now = Date.now();
@@ -37,8 +33,4 @@ export function cleanupExpired(): number {
     }
   }
   return removed;
-}
-
-export function clearAllCooldowns(): void {
-  cooldownExpiry.clear();
 }

@@ -1,6 +1,5 @@
-import { vi } from "vitest";
-
 import type { PluginInput } from "@opencode-ai/plugin";
+import { vi } from "vitest";
 
 export function createMockContext(overrides?: {
   abort?: ReturnType<typeof vi.fn>;
@@ -44,32 +43,4 @@ export function createMockContext(overrides?: {
     },
     directory: "/mock/dir",
   } as unknown as PluginInput;
-}
-
-export function createMockMessages(opts: {
-  sessionID?: string;
-  agent?: string;
-  providerID?: string;
-  modelID?: string;
-  userText?: string;
-  assistantText?: string;
-}) {
-  const sid = opts.sessionID ?? "test-session";
-  return [
-    {
-      info: { id: "msg-u1", role: "user", sessionID: sid, agent: opts.agent },
-      parts: [{ id: "p1", type: "text", text: opts.userText ?? "hello" }],
-    },
-    {
-      // SDK AssistantMessage has providerID/modelID as flat properties
-      info: {
-        id: "msg-a1",
-        role: "assistant",
-        sessionID: sid,
-        providerID: opts.providerID,
-        modelID: opts.modelID ?? "test-model",
-      },
-      parts: [{ id: "p2", type: "text", text: opts.assistantText ?? "response" }],
-    },
-  ];
 }

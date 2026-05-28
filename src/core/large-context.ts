@@ -1,5 +1,10 @@
-import { LARGE_CONTEXT_CONTINUATION, RETURN_CONTINUATION, TOAST_DURATION_MS } from "@/config/constants";
+import type { PluginInput } from "@opencode-ai/plugin";
 import { getAgentLargeContextModel } from "@/config/config";
+import {
+  LARGE_CONTEXT_CONTINUATION,
+  RETURN_CONTINUATION,
+  TOAST_DURATION_MS,
+} from "@/config/constants";
 import type { FallbackConfig, ResolvedModel } from "@/config/types";
 import {
   clearActiveFallbackParams,
@@ -20,13 +25,7 @@ import { serializeError } from "@/utils/error";
 import { buildSyntheticContinuationPart } from "@/utils/fallback-notification";
 import { formatModelKey } from "@/utils/model";
 import type { Logger } from "@/utils/session-utils";
-import {
-  abortSessionSafely,
-  fetchSessionData,
-  showToastSafely,
-} from "@/utils/session-utils";
-
-import type { PluginInput } from "@opencode-ai/plugin";
+import { abortSessionSafely, fetchSessionData, showToastSafely } from "@/utils/session-utils";
 
 export function shouldSkipLargeContextFallback(
   currentWindow: number,
@@ -103,9 +102,7 @@ export async function handleLargeContextSwitch(
         body: {
           model: { providerID: largeModel.providerID, modelID: largeModel.modelID },
           agent,
-          parts: [
-            buildSyntheticContinuationPart(LARGE_CONTEXT_CONTINUATION),
-          ],
+          parts: [buildSyntheticContinuationPart(LARGE_CONTEXT_CONTINUATION)],
         },
       })
       .catch(async (err) => {
@@ -219,9 +216,7 @@ export async function handleLargeContextCompletion(
       path: { id: sessionID },
       body: {
         model: { providerID: original.providerID, modelID: original.modelID },
-        parts: [
-          buildSyntheticContinuationPart(RETURN_CONTINUATION),
-        ],
+        parts: [buildSyntheticContinuationPart(RETURN_CONTINUATION)],
       },
     })
     .catch(async (err) => {

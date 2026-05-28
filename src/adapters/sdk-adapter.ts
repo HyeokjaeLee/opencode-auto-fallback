@@ -1,6 +1,5 @@
-import type { MessageInfo, MessagePart, MessageWithParts } from "@/config/types";
-
 import type { Message as SDKMessage, Part as SDKPart } from "@opencode-ai/sdk";
+import type { MessageInfo, MessagePart, MessageWithParts } from "@/config/types";
 
 function toMessageInfo(msg: SDKMessage): MessageInfo {
   if (msg.role === "assistant") {
@@ -27,7 +26,12 @@ function toMessagePart(part: SDKPart): MessagePart {
     case "text":
       return { ...base, text: part.text, synthetic: part.synthetic };
     case "file":
-      return { ...base, mime: part.mime, filename: part.filename, url: part.url };
+      return {
+        ...base,
+        mime: part.mime,
+        filename: part.filename,
+        url: part.url,
+      };
     case "agent":
       return { ...base, name: part.name };
     default:
@@ -44,7 +48,10 @@ export function adaptMessages(
   }));
 }
 
-export function getModelFromMessage(msg: SDKMessage): { providerID: string; modelID: string } {
+export function getModelFromMessage(msg: SDKMessage): {
+  providerID: string;
+  modelID: string;
+} {
   if (msg.role === "assistant") {
     return { providerID: msg.providerID, modelID: msg.modelID };
   }

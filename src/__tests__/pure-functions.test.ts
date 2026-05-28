@@ -39,10 +39,7 @@ describe("getFallbackChain", () => {
     agents: {
       build: { fallback: ["anthropic/claude-sonnet-4"] },
       oracle: {
-        fallback: [
-          "openai/gpt-5.5",
-          { "model": "zai-coding-plan/glm-5.1", "variant": "high" },
-        ],
+        fallback: ["openai/gpt-5.5", { model: "zai-coding-plan/glm-5.1", variant: "high" }],
       },
     },
     cooldownMs: 300000,

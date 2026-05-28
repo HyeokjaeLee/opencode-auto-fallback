@@ -1,30 +1,29 @@
+import type { PluginInput } from "@opencode-ai/plugin";
 import { getAgentLargeContextModel, getAgentMinContextRatio } from "@/config/config";
 import type { FallbackConfig } from "@/config/types";
 import {
-  handleLargeContextSwitch,
   handleLargeContextReturn,
+  handleLargeContextSwitch,
   shouldSkipLargeContextFallback,
 } from "@/core/large-context";
 import {
+  clearCompactionTarget,
+  deleteLargeContextPhase,
   getCurrentModel,
   getLargeContextPhase,
-  deleteLargeContextPhase,
-  setCompactionTarget,
-  clearCompactionTarget,
-  getSessionOriginalAgent,
-  isRegisteredAgent,
-  hasRegisteredAgents,
   getModelContextLimit,
-  setSessionOriginalAgent,
+  getSessionOriginalAgent,
+  hasRegisteredAgents,
   isOpencodeCompacting,
+  isRegisteredAgent,
+  setCompactionTarget,
+  setSessionOriginalAgent,
 } from "@/state/context-state";
 import { isModelInCooldown } from "@/state/provider-state";
 import { checkContextThreshold } from "@/utils/context";
 import { formatModelKey, isSameModel } from "@/utils/model";
 import type { Logger } from "@/utils/session-utils";
 import { abortSessionSafely, fetchSessionData } from "@/utils/session-utils";
-
-import type { PluginInput } from "@opencode-ai/plugin";
 
 export async function handleSessionIdle(
   config: FallbackConfig,
@@ -91,7 +90,12 @@ export async function handleSessionIdle(
         await context.client.session.summarize({
           path: { id: props.sessionID },
           ...(curModel
-            ? { body: { providerID: curModel.providerID, modelID: curModel.modelID } }
+            ? {
+                body: {
+                  providerID: curModel.providerID,
+                  modelID: curModel.modelID,
+                },
+              }
             : {}),
         });
       } catch {
@@ -121,7 +125,8 @@ export async function handleSessionIdle(
       if (isModelInCooldown(parsedModel.providerID, parsedModel.modelID)) return;
       const largeLimit = getModelContextLimit(formatModelKey(parsedModel));
       const minRatio = getAgentMinContextRatio(config, agent);
-      if (largeLimit && shouldSkipLargeContextFallback(thresholdResult.limit, largeLimit, minRatio)) return;
+      if (largeLimit && shouldSkipLargeContextFallback(thresholdResult.limit, largeLimit, minRatio))
+        return;
     }
 
     await handleLargeContextSwitch(

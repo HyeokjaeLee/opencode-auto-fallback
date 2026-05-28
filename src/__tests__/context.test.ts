@@ -1,11 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-
+import { cleanupSession, setCurrentModel, setModelContextLimit } from "@/state/context-state";
 import { checkContextThreshold } from "@/utils/context";
-import {
-  cleanupSession,
-  setCurrentModel,
-  setModelContextLimit,
-} from "@/state/context-state";
 
 import { createMockContext } from "./mocks";
 

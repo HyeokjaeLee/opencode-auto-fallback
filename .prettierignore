@@ -1,6 +1,0 @@
-node_modules/
-dist/
-*.log
-.git/
-bun.lock
-AGENTS.md

@@ -1,5 +1,3 @@
-export { createPlugin as AutoFallbackPlugin } from "@/core/plugin";
-
 export type {
   AgentConfig,
   ErrorClass,
@@ -10,6 +8,7 @@ export type {
   FallbackModelEntry,
   ResolvedModel,
 } from "@/config/types";
+export { createPlugin as AutoFallbackPlugin } from "@/core/plugin";
 
 import { createPlugin } from "@/core/plugin";
 

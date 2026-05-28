@@ -85,8 +85,8 @@ export function getModelContextLimit(modelKey: string): number | undefined {
 
 const modelInputLimits = new Map<string, number>();
 
-export function setModelLimit(modelKey: string, type: "input" | "output", limit: number): void {
-  if (type === "input") modelInputLimits.set(modelKey, limit);
+export function setModelInputLimit(modelKey: string, limit: number): void {
+  modelInputLimits.set(modelKey, limit);
 }
 
 export function getModelInputLimit(modelKey: string): number | undefined {
