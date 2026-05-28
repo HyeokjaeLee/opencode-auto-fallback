@@ -174,7 +174,6 @@ export function cleanupSession(sessionID: string): void {
   sessionRestoreModel.delete(sessionID);
   compactionTarget.delete(sessionID);
   opencodeCompacting.delete(sessionID);
-  tuiOverrideModel.delete(sessionID);
 }
 
 export function setRegisteredAgents(agents: string[]): void {
