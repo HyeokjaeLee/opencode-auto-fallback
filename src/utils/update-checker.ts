@@ -11,7 +11,7 @@ const CACHE_PACKAGES_DIR = join(
   "packages",
 );
 
-export interface UpdateInfo {
+interface UpdateInfo {
   current: string;
   latest: string;
   hasUpdate: boolean;

@@ -1,3 +1,4 @@
+import type { PluginInput } from "@opencode-ai/plugin";
 import { getFallbackChain } from "@/config/config";
 import { BACKOFF_BASE_MS, LARGE_CONTEXT_CONTINUATION, TOAST_DURATION_MS } from "@/config/constants";
 import type { FallbackConfig, FallbackModel } from "@/config/types";
@@ -16,8 +17,6 @@ import { buildSyntheticContinuationPart } from "@/utils/fallback-notification";
 import { formatModelKey } from "@/utils/model";
 import type { Logger } from "@/utils/session-utils";
 import { abortSession, showToastSafely } from "@/utils/session-utils";
-
-import type { PluginInput } from "@opencode-ai/plugin";
 
 export async function fallbackToModel(
   sessionID: string,
@@ -47,9 +46,7 @@ export async function fallbackToModel(
       body: {
         model: { providerID: toModel.providerID, modelID: toModel.modelID },
         agent,
-        parts: [
-          buildSyntheticContinuationPart(LARGE_CONTEXT_CONTINUATION),
-        ],
+        parts: [buildSyntheticContinuationPart(LARGE_CONTEXT_CONTINUATION)],
         ...(toModel.variant ? { variant: toModel.variant } : {}),
       },
     });
@@ -64,7 +61,7 @@ export async function fallbackToModel(
   }
 }
 
-export async function getValidatedFallbackChain(
+async function getValidatedFallbackChain(
   config: FallbackConfig,
   agent: string | undefined,
   sessionID: string,
@@ -149,7 +146,7 @@ export async function handleRetry(
   await abortSession(sessionID, context);
 
   if (currentModel && backoffLevel <= config.maxRetries) {
-    const waitMs = BACKOFF_BASE_MS * Math.pow(2, backoffLevel - 1);
+    const waitMs = BACKOFF_BASE_MS * 2 ** (backoffLevel - 1);
     await logger.info(`Backoff retry ${backoffLevel}/${config.maxRetries} (${waitMs}ms)`, {
       sessionID,
     });
@@ -184,7 +181,15 @@ export async function handleRetry(
   }
   const chain = await getValidatedFallbackChain(config, agent, sessionID, logger);
   if (chain.length === 0) return;
-  await tryFallbackChain(sessionID, chain, agent, currentModel ?? null, "Retries exhausted", logger, context);
+  await tryFallbackChain(
+    sessionID,
+    chain,
+    agent,
+    currentModel ?? null,
+    "Retries exhausted",
+    logger,
+    context,
+  );
 }
 
 export async function handleImmediate(
@@ -221,5 +226,13 @@ export async function handleImmediate(
     sessionID,
   });
   if (chain.length === 0) return;
-  await tryFallbackChain(sessionID, chain, agent, currentModel ?? null, "Immediate fallback", logger, context);
+  await tryFallbackChain(
+    sessionID,
+    chain,
+    agent,
+    currentModel ?? null,
+    "Immediate fallback",
+    logger,
+    context,
+  );
 }
