@@ -1,4 +1,3 @@
-import type { PluginInput } from "@opencode-ai/plugin";
 import type { FallbackConfig } from "@/config/types";
 import { isPermanentRateLimitMessage, isTransientErrorMessage } from "@/core/decision";
 import { handleImmediate } from "@/core/fallback";
@@ -6,6 +5,8 @@ import { getLargeContextPhase, getSessionOriginalAgent } from "@/state/context-s
 import { cleanupExpired } from "@/state/provider-state";
 import { isCooldownActive, resetIfExpired } from "@/state/session-state";
 import type { Logger } from "@/utils/session-utils";
+
+import type { PluginInput } from "@opencode-ai/plugin";
 
 export async function handleSessionStatus(
   config: FallbackConfig,

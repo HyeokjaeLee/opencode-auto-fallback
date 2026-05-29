@@ -31,10 +31,7 @@
       "default": []
     },
     "defaultLargeContextModel": {
-      "oneOf": [
-        { "type": "string" },
-        { "type": "boolean", "enum": [false] }
-      ],
+      "oneOf": [{ "type": "string" }, { "type": "boolean", "enum": [false] }],
       "description": "Default model to switch to when an agent's context window fills up. Inherited by agents without their own largeContextModel. Set false to disable large context fallback by default.",
       "default": false
     },
@@ -89,10 +86,7 @@
           ]
         },
         "largeContextModel": {
-          "oneOf": [
-            { "type": "string" },
-            { "type": "boolean", "enum": [false] }
-          ],
+          "oneOf": [{ "type": "string" }, { "type": "boolean", "enum": [false] }],
           "description": "Model to switch to when this agent's context fills up. Overrides defaultLargeContextModel. Set false to explicitly disable large context fallback for this agent."
         },
         "minContextRatio": {

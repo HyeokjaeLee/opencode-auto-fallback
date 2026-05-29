@@ -3,6 +3,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 
 import { DEFAULT_MIN_CONTEXT_RATIO } from "./constants";
+
 import type {
   AgentConfig,
   FallbackConfig,
@@ -237,7 +238,7 @@ export function getRegisteredAgentNames(config: FallbackConfig): string[] {
   return Object.entries(config.agents)
     .filter(([_, ac]) => {
       if (ac.largeContextModel === false) return false;
-      return ac.largeContextModel !== undefined || !!config.defaultLargeContextModel;
+      return ac.largeContextModel !== undefined || Boolean(config.defaultLargeContextModel);
     })
     .map(([name]) => normalizeAgentName(name));
 }

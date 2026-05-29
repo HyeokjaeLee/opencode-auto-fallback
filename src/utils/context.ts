@@ -1,10 +1,11 @@
-import type { PluginInput } from "@opencode-ai/plugin";
-
 import { CONTEXT_THRESHOLD_RATIO } from "@/config/constants";
 import { getCurrentModel, getModelContextLimit, getModelInputLimit } from "@/state/context-state";
+
 import { serializeError } from "./error";
 import { formatModelKey } from "./model";
+
 import type { Logger } from "./session-utils";
+import type { PluginInput } from "@opencode-ai/plugin";
 
 interface ContextThresholdResult {
   atThreshold: boolean;

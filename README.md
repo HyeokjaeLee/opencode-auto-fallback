@@ -40,24 +40,24 @@ On first run, a default config is auto-created at `~/.config/opencode/fallback.j
   "defaultMinContextRatio": 0.1,
   "agents": {
     "reviewer": {
-      "fallback": ["zai-coding-plan/glm-5.1"]
+      "fallback": ["zai-coding-plan/glm-5.1"],
     },
     "Sisyphus - Ultraworker": {
       "fallback": [
         "opencode-go/deepseek-v4-pro",
-        { "model": "openai/gpt-5.5", "temperature": 0.5 }
+        { "model": "openai/gpt-5.5", "temperature": 0.5 },
       ],
       "largeContextModel": "google/gemini-2.5-pro",
-      "minContextRatio": 0.15
+      "minContextRatio": 0.15,
     },
     "explore": {
       "fallback": ["anthropic/claude-sonnet-4"],
-      "largeContextModel": false
-    }
+      "largeContextModel": false,
+    },
   },
   "cooldownMs": 60000,
   "maxRetries": 2,
-  "logging": false
+  "logging": false,
 }
 ```
 
@@ -65,29 +65,30 @@ On first run, a default config is auto-created at `~/.config/opencode/fallback.j
 
 #### Top-level fields
 
-| Field                      | Type                | Default   | Description                                                                                                                                                  |
-| -------------------------- | ------------------- | --------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `enabled`                  | `boolean`           | `false`   | Enable/disable the plugin. Must be `true` for any behavior to work.                                                                                          |
-| `autoUpdate`               | `boolean`           | `false`   | Automatically check for plugin updates on startup and install them. When `false`, updates must be done manually.                                             |
-| `defaultFallback`          | `FallbackEntry[]`   | `[]`      | Fallback model chain used by agents that don't define their own `fallback`. When empty, only agents with an explicit `fallback` field trigger fallback.      |
-| `defaultLargeContextModel` | `string \| false`   | `false`   | Model to switch to when an agent's context window fills up. Inherited by agents without their own `largeContextModel`. Set `false` to disable by default.    |
-| `defaultMinContextRatio`   | `number`            | `0.1`     | Minimum fractional increase in context window required to trigger large context fallback (default 10%). Inherited by agents without their own value.        |
-| `agents`                   | `Record<string, AgentConfig>` | `{}` | Per-agent configuration. Key is agent name (matched case-insensitively, whitespace ignored). See [Agent Config](#agent-config) below.                        |
-| `cooldownMs`               | `number`            | `60000`   | Cooldown duration in milliseconds after immediate fallback. Prevents rapid re-triggering on the same model.                                                  |
-| `maxRetries`               | `number`            | `2`       | Maximum backoff retry attempts before switching to the fallback chain. Exponential: 2s → 4s → 8s….                                                           |
-| `logging`                  | `boolean`           | `false`   | Enable file-based logging to `~/.local/share/opencode/log/fallback.log`.                                                                                     |
+| Field                      | Type                          | Default | Description                                                                                                                                               |
+| -------------------------- | ----------------------------- | ------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `enabled`                  | `boolean`                     | `false` | Enable/disable the plugin. Must be `true` for any behavior to work.                                                                                       |
+| `autoUpdate`               | `boolean`                     | `false` | Automatically check for plugin updates on startup and install them. When `false`, updates must be done manually.                                          |
+| `defaultFallback`          | `FallbackEntry[]`             | `[]`    | Fallback model chain used by agents that don't define their own `fallback`. When empty, only agents with an explicit `fallback` field trigger fallback.   |
+| `defaultLargeContextModel` | `string \| false`             | `false` | Model to switch to when an agent's context window fills up. Inherited by agents without their own `largeContextModel`. Set `false` to disable by default. |
+| `defaultMinContextRatio`   | `number`                      | `0.1`   | Minimum fractional increase in context window required to trigger large context fallback (default 10%). Inherited by agents without their own value.      |
+| `agents`                   | `Record<string, AgentConfig>` | `{}`    | Per-agent configuration. Key is agent name (matched case-insensitively, whitespace ignored). See [Agent Config](#agent-config) below.                     |
+| `cooldownMs`               | `number`                      | `60000` | Cooldown duration in milliseconds after immediate fallback. Prevents rapid re-triggering on the same model.                                               |
+| `maxRetries`               | `number`                      | `2`     | Maximum backoff retry attempts before switching to the fallback chain. Exponential: 2s → 4s → 8s….                                                        |
+| `logging`                  | `boolean`                     | `false` | Enable file-based logging to `~/.local/share/opencode/log/fallback.log`.                                                                                  |
 
 #### Agent Config
 
 Each entry in the `agents` map configures behavior for a specific agent. All fields are optional — omitted fields inherit from the top-level defaults.
 
-| Field               | Type                | Inherited From          | Description                                                                                                         |
-| ------------------- | ------------------- | ----------------------- | ------------------------------------------------------------------------------------------------------------------- |
-| `fallback`          | `FallbackEntry[]`   | `defaultFallback`       | Fallback model chain for this agent. Agent chain is tried first, then `defaultFallback` models not already tried (deduped).                                          |
-| `largeContextModel` | `string \| false`   | `defaultLargeContextModel` | Model to switch to when this agent's context fills up. Set `false` to explicitly disable even if a default exists. |
-| `minContextRatio`   | `number`            | `defaultMinContextRatio` | Minimum context window increase ratio for this agent. Overrides the default.                                        |
+| Field               | Type              | Inherited From             | Description                                                                                                                 |
+| ------------------- | ----------------- | -------------------------- | --------------------------------------------------------------------------------------------------------------------------- |
+| `fallback`          | `FallbackEntry[]` | `defaultFallback`          | Fallback model chain for this agent. Agent chain is tried first, then `defaultFallback` models not already tried (deduped). |
+| `largeContextModel` | `string \| false` | `defaultLargeContextModel` | Model to switch to when this agent's context fills up. Set `false` to explicitly disable even if a default exists.          |
+| `minContextRatio`   | `number`          | `defaultMinContextRatio`   | Minimum context window increase ratio for this agent. Overrides the default.                                                |
 
 **Inheritance rule**:
+
 - `largeContextModel`, `minContextRatio`: per-agent field → top-level default → `false`/empty.
 - `fallback`: agent chain first, then `defaultFallback` models not already in the agent chain (deduped by `providerID/modelID`). If agent has no explicit `fallback`, uses `defaultFallback` only.
 
@@ -110,16 +111,16 @@ Each entry in a fallback chain can be a simple string or an object with `model` 
 }
 ```
 
-| Field              | Type     | Description                                          |
-| ------------------ | -------- | ---------------------------------------------------- |
-| `model`            | `string` | Provider/model identifier (e.g. `openai/gpt-5.5`)   |
-| `variant`          | `string` | Model variant (e.g. `high`, `medium`, `low`)         |
-| `reasoningEffort`  | `string` | `none`, `minimal`, `low`, `medium`, `high`, `xhigh`  |
-| `temperature`      | `number` | Generation temperature (0–2)                         |
-| `topP`             | `number` | Top-p sampling (0–1)                                 |
-| `maxTokens`        | `number` | Maximum output tokens                                |
-| `thinking.type`    | `string` | `enabled` or `disabled`                              |
-| `thinking.budgetTokens` | `number` | Token budget for thinking                       |
+| Field                   | Type     | Description                                         |
+| ----------------------- | -------- | --------------------------------------------------- |
+| `model`                 | `string` | Provider/model identifier (e.g. `openai/gpt-5.5`)   |
+| `variant`               | `string` | Model variant (e.g. `high`, `medium`, `low`)        |
+| `reasoningEffort`       | `string` | `none`, `minimal`, `low`, `medium`, `high`, `xhigh` |
+| `temperature`           | `number` | Generation temperature (0–2)                        |
+| `topP`                  | `number` | Top-p sampling (0–1)                                |
+| `maxTokens`             | `number` | Maximum output tokens                               |
+| `thinking.type`         | `string` | `enabled` or `disabled`                             |
+| `thinking.budgetTokens` | `number` | Token budget for thinking                           |
 
 ### Agent Name Matching
 
@@ -159,17 +160,17 @@ When a registered agent's context window fills up mid-task, the plugin automatic
   "agents": {
     // Inherits defaultLargeContextModel
     "Sisyphus - Ultraworker": {
-      "fallback": ["opencode-go/deepseek-v4-pro"]
+      "fallback": ["opencode-go/deepseek-v4-pro"],
     },
     // Uses its own large context model
     "hephaestus - deepagent": {
-      "largeContextModel": "google/gemini-2.5-pro"
+      "largeContextModel": "google/gemini-2.5-pro",
     },
     // Explicitly disabled — no large context fallback
     "explore": {
-      "largeContextModel": false
-    }
-  }
+      "largeContextModel": false,
+    },
+  },
 }
 ```
 

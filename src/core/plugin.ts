@@ -1,4 +1,3 @@
-import type { Hooks, PluginInput } from "@opencode-ai/plugin";
 import { getAgentLargeContextModel, getRegisteredAgentNames, loadConfig } from "@/config/config";
 import {
   COMPACTION_FALLBACK_TOKEN_LIMIT,
@@ -35,6 +34,8 @@ import type { Logger } from "@/utils/session-utils";
 import { abortSessionSafely, showToastSafely } from "@/utils/session-utils";
 import { checkForUpdates, tryInstallUpdate } from "@/utils/update-checker";
 import { version as currentVersion } from "~/package.json";
+
+import type { Hooks, PluginInput } from "@opencode-ai/plugin";
 
 type PluginHooks = Hooks & {
   "experimental.compaction.autocontinue"?: (

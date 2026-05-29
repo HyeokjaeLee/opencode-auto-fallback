@@ -1,4 +1,3 @@
-import type { PluginInput } from "@opencode-ai/plugin";
 import { getAgentLargeContextModel, getAgentMinContextRatio } from "@/config/config";
 import type { FallbackConfig } from "@/config/types";
 import {
@@ -24,6 +23,8 @@ import { checkContextThreshold } from "@/utils/context";
 import { formatModelKey, isSameModel } from "@/utils/model";
 import type { Logger } from "@/utils/session-utils";
 import { abortSessionSafely, fetchSessionData } from "@/utils/session-utils";
+
+import type { PluginInput } from "@opencode-ai/plugin";
 
 export async function handleSessionIdle(
   config: FallbackConfig,
@@ -218,10 +219,7 @@ export async function handleSessionIdle(
     return;
   }
 
-  if (phase === "summarizing") {
-    await logger.info("Idle: summarizing — waiting for compacted event to trigger switch-back", {
-      sessionID: props.sessionID,
-    });
-    return;
-  }
+  await logger.info("Idle: summarizing — waiting for compacted event to trigger switch-back", {
+    sessionID: props.sessionID,
+  });
 }

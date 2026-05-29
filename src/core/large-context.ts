@@ -1,4 +1,3 @@
-import type { PluginInput } from "@opencode-ai/plugin";
 import { getAgentLargeContextModel } from "@/config/config";
 import {
   LARGE_CONTEXT_CONTINUATION,
@@ -26,6 +25,8 @@ import { buildSyntheticContinuationPart } from "@/utils/fallback-notification";
 import { formatModelKey } from "@/utils/model";
 import type { Logger } from "@/utils/session-utils";
 import { abortSessionSafely, fetchSessionData, showToastSafely } from "@/utils/session-utils";
+
+import type { PluginInput } from "@opencode-ai/plugin";
 
 export function shouldSkipLargeContextFallback(
   currentWindow: number,

@@ -1,4 +1,3 @@
-import type { PluginInput } from "@opencode-ai/plugin";
 import { getFallbackChain } from "@/config/config";
 import { BACKOFF_BASE_MS, LARGE_CONTEXT_CONTINUATION, TOAST_DURATION_MS } from "@/config/constants";
 import type { FallbackConfig, FallbackModel } from "@/config/types";
@@ -17,6 +16,8 @@ import { buildSyntheticContinuationPart } from "@/utils/fallback-notification";
 import { formatModelKey } from "@/utils/model";
 import type { Logger } from "@/utils/session-utils";
 import { abortSession, showToastSafely } from "@/utils/session-utils";
+
+import type { PluginInput } from "@opencode-ai/plugin";
 
 export async function fallbackToModel(
   sessionID: string,

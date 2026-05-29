@@ -1,4 +1,3 @@
-import type { PluginInput } from "@opencode-ai/plugin";
 import { getAgentLargeContextModel } from "@/config/config";
 import type { FallbackConfig } from "@/config/types";
 import {
@@ -25,6 +24,8 @@ import { isCooldownActive } from "@/state/session-state";
 import { isSameModel } from "@/utils/model";
 import type { Logger } from "@/utils/session-utils";
 import { abortSessionSafely } from "@/utils/session-utils";
+
+import type { PluginInput } from "@opencode-ai/plugin";
 
 export async function handleSessionError(
   config: FallbackConfig,
@@ -136,7 +137,7 @@ export async function handleSessionError(
   const phase = getLargeContextPhase(sessionID);
   if (
     phase === "summarizing" &&
-    err.data.message?.includes("Tool call not allowed while generating summary")
+    err.data.message.includes("Tool call not allowed while generating summary")
   ) {
     const agent = getSessionOriginalAgent(sessionID);
     const parsedModel = agent ? getAgentLargeContextModel(config, agent) : null;

@@ -1,11 +1,13 @@
-import type { PluginInput } from "@opencode-ai/plugin";
 import type { FallbackConfig } from "@/config/types";
 import type { Logger } from "@/utils/session-utils";
+
 import { handleSessionCompacted } from "./handle-session-compacted";
 import { handleSessionDeleted } from "./handle-session-deleted";
 import { handleSessionError } from "./handle-session-error";
 import { handleSessionIdle } from "./handle-session-idle";
 import { handleSessionStatus } from "./handle-session-status";
+
+import type { PluginInput } from "@opencode-ai/plugin";
 
 export function createEventHandler(config: FallbackConfig, logger: Logger, context: PluginInput) {
   return async ({ event }: { event: { type: string; properties: unknown } }) => {
