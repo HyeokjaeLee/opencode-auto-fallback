@@ -12,7 +12,6 @@ import {
 } from "@/state/context-state";
 import { isModelInCooldown } from "@/state/provider-state";
 import { removeSession } from "@/state/session-state";
-import { showToastSafely } from "@/utils/session-utils";
 
 import { createMockContext } from "./mocks";
 
@@ -43,30 +42,6 @@ afterEach(() => {
   cleanupSession(SESSION);
   removeSession(SESSION);
   vi.clearAllMocks();
-});
-
-describe("showToastSafely", () => {
-  it("calls tui.showToast and returns", async () => {
-    const mockToast = vi.fn().mockResolvedValue(true);
-    const ctx = createMockContext({ showToast: mockToast });
-
-    await showToastSafely(ctx, { message: "test", variant: "info" }, noopLogger);
-
-    expect(mockToast).toHaveBeenCalledWith({
-      body: { message: "test", variant: "info" },
-    });
-  });
-
-  it("swallows toast errors gracefully", async () => {
-    const mockToast = vi.fn().mockRejectedValue(new Error("tui not available"));
-    const ctx = createMockContext({ showToast: mockToast });
-
-    await expect(
-      showToastSafely(ctx, { message: "test", variant: "warning" }, noopLogger),
-    ).resolves.toBeUndefined();
-
-    expect(noopLogger.warn).toHaveBeenCalled();
-  });
 });
 
 describe("isRegisteredAgent", () => {
@@ -118,8 +93,8 @@ describe("tryFallbackChain", () => {
     );
 
     expect(ok).toBe(true);
-    expect(mockPrompt).toHaveBeenCalledTimes(1);
-    expect(mockPrompt).toHaveBeenCalledWith(
+    expect(mockPrompt).toHaveBeenCalledTimes(2);
+    expect(mockPrompt).toHaveBeenLastCalledWith(
       expect.objectContaining({
         body: expect.objectContaining({
           model: { providerID: "openai", modelID: "gpt-5.4" },
@@ -171,7 +146,7 @@ describe("tryFallbackChain", () => {
     );
 
     expect(ok).toBe(false);
-    expect(mockPrompt).toHaveBeenCalledTimes(1);
+    expect(mockPrompt).toHaveBeenCalledTimes(3);
     expect(noopLogger.error).toHaveBeenCalledWith(
       "All fallback models exhausted",
       expect.any(Object),

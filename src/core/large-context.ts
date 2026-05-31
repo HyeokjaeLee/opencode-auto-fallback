@@ -2,7 +2,6 @@ import { getAgentLargeContextModel } from "@/config/config";
 import {
   LARGE_CONTEXT_CONTINUATION,
   RETURN_CONTINUATION,
-  TOAST_DURATION_MS,
 } from "@/config/constants";
 import type { FallbackConfig, ResolvedModel } from "@/config/types";
 import {
@@ -21,10 +20,13 @@ import {
 } from "@/state/context-state";
 import { isModelInCooldown } from "@/state/provider-state";
 import { serializeError } from "@/utils/error";
-import { buildSyntheticContinuationPart } from "@/utils/fallback-notification";
+import {
+  buildFallbackNotificationPart,
+  buildSyntheticContinuationPart,
+} from "@/utils/fallback-notification";
 import { formatModelKey } from "@/utils/model";
 import type { Logger } from "@/utils/session-utils";
-import { abortSessionSafely, fetchSessionData, showToastSafely } from "@/utils/session-utils";
+import { abortSessionSafely, fetchSessionData, showTuiNotification } from "@/utils/session-utils";
 
 import type { PluginInput } from "@opencode-ai/plugin";
 
@@ -86,14 +88,10 @@ export async function handleLargeContextSwitch(
 
     setLargeContextPhase(sessionID, "active");
 
-    await showToastSafely(
+    await showTuiNotification(
       context,
-      {
-        title: "Large context model",
-        message: `${formatModelKey(original)} → ${formatModelKey(largeModel)}`,
-        variant: "info",
-        duration: TOAST_DURATION_MS,
-      },
+      sessionID,
+      [buildFallbackNotificationPart(formatModelKey(original), formatModelKey(largeModel), "Switching to large context model")],
       logger,
     );
 
@@ -201,14 +199,16 @@ export async function handleLargeContextCompletion(
   deleteLargeContextPhase(sessionID);
   deleteRestoreModel(sessionID);
 
-  await showToastSafely(
+  await showTuiNotification(
     context,
-    {
-      title: "Return to default model",
-      message: `${formatModelKey(getCurrentModel(sessionID) ?? original)} → ${formatModelKey(original)}`,
-      variant: "info",
-      duration: TOAST_DURATION_MS,
-    },
+    sessionID,
+    [
+      buildFallbackNotificationPart(
+        formatModelKey(getCurrentModel(sessionID) ?? original),
+        formatModelKey(original),
+        "Returning to default context model",
+      ),
+    ],
     logger,
   );
 

@@ -1,9 +1,5 @@
 import { getAgentLargeContextModel, getRegisteredAgentNames, loadConfig } from "@/config/config";
-import {
-  COMPACTION_FALLBACK_TOKEN_LIMIT,
-  TOAST_DURATION_LONG_MS,
-  TOAST_DURATION_MS,
-} from "@/config/constants";
+import { COMPACTION_FALLBACK_TOKEN_LIMIT } from "@/config/constants";
 import type { FallbackConfig } from "@/config/types";
 import { createEventHandler } from "@/hooks/events";
 import {
@@ -31,7 +27,7 @@ import { serializeError } from "@/utils/error";
 import { createLogger } from "@/utils/log";
 import { formatModelKey, isSameModel } from "@/utils/model";
 import type { Logger } from "@/utils/session-utils";
-import { abortSessionSafely, showToastSafely } from "@/utils/session-utils";
+import { abortSessionSafely } from "@/utils/session-utils";
 import { checkForUpdates, tryInstallUpdate } from "@/utils/update-checker";
 import { version as currentVersion } from "~/package.json";
 
@@ -115,41 +111,13 @@ export async function createPlugin(context: PluginInput): Promise<PluginHooks> {
         if (!info.hasUpdate) return;
 
         await logger.info(`Update available: ${info.current} → ${info.latest}`);
-        await showToastSafely(
-          context,
-          {
-            title: "Updating Plugin",
-            message: `opencode-auto-fallback ${info.current} → ${info.latest}`,
-            variant: "info",
-            duration: TOAST_DURATION_MS,
-          },
-          logger,
-        );
 
         const ok = await tryInstallUpdate(info.latest);
         if (ok) {
-          await logger.info(`Updated to ${info.latest}`);
-          await showToastSafely(
-            context,
-            {
-              title: "Plugin Updated",
-              message: `opencode-auto-fallback updated to ${info.latest}. Restart opencode to apply.`,
-              variant: "success",
-              duration: TOAST_DURATION_LONG_MS,
-            },
-            logger,
-          );
+          await logger.info(`Updated to ${info.latest}. Restart opencode to apply.`);
         } else {
-          await logger.warn("Auto-update failed");
-          await showToastSafely(
-            context,
-            {
-              title: "Update Failed",
-              message: `Could not auto-update. Run manually: bun update opencode-auto-fallback`,
-              variant: "warning",
-              duration: TOAST_DURATION_LONG_MS,
-            },
-            logger,
+          await logger.warn(
+            `Auto-update failed. Run manually: bun update opencode-auto-fallback`,
           );
         }
       })

@@ -1,5 +1,5 @@
 import { getFallbackChain } from "@/config/config";
-import { BACKOFF_BASE_MS, LARGE_CONTEXT_CONTINUATION, TOAST_DURATION_MS } from "@/config/constants";
+import { BACKOFF_BASE_MS, LARGE_CONTEXT_CONTINUATION } from "@/config/constants";
 import type { FallbackConfig, FallbackModel } from "@/config/types";
 import {
   deleteLargeContextPhase,
@@ -12,10 +12,14 @@ import {
 import { isModelInCooldown, markModelCooldown } from "@/state/provider-state";
 import { activateCooldown, incrementBackoff, resetBackoff } from "@/state/session-state";
 import { serializeError } from "@/utils/error";
-import { buildSyntheticContinuationPart } from "@/utils/fallback-notification";
+import {
+  buildExhaustedNotificationPart,
+  buildFallbackNotificationPart,
+  buildSyntheticContinuationPart,
+} from "@/utils/fallback-notification";
 import { formatModelKey } from "@/utils/model";
 import type { Logger } from "@/utils/session-utils";
-import { abortSession, showToastSafely } from "@/utils/session-utils";
+import { abortSession, showTuiNotification } from "@/utils/session-utils";
 
 import type { PluginInput } from "@opencode-ai/plugin";
 
@@ -31,14 +35,10 @@ export async function fallbackToModel(
   try {
     setActiveFallbackParams(sessionID, toModel);
     if (fromModel) {
-      await showToastSafely(
+      await showTuiNotification(
         context,
-        {
-          title: reason,
-          message: `${formatModelKey(fromModel)} → ${formatModelKey(toModel)}`,
-          variant: "info",
-          duration: TOAST_DURATION_MS,
-        },
+        sessionID,
+        [buildFallbackNotificationPart(formatModelKey(fromModel), formatModelKey(toModel), reason)],
         logger,
       );
     }
@@ -108,14 +108,10 @@ export async function tryFallbackChain(
       return true;
     }
   }
-  await showToastSafely(
+  await showTuiNotification(
     context,
-    {
-      title: "All fallback models exhausted",
-      message: fromModel ? formatModelKey(fromModel) : "unknown",
-      variant: "warning",
-      duration: TOAST_DURATION_MS * 2,
-    },
+    sessionID,
+    [buildExhaustedNotificationPart(fromModel ? formatModelKey(fromModel) : "unknown", "All fallback models exhausted")],
     logger,
   );
   await logger.error("All fallback models exhausted", {
