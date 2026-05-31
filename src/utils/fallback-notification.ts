@@ -4,7 +4,7 @@ export function buildFallbackNotificationPart(from: string, to: string, reason: 
   return {
     type: "text" as const,
     text: `[${from} → ${to} / ${reason}]\n${FALLBACK_MARKER}`,
-    synthetic: true,
+    ignored: true,
   };
 }
 
@@ -12,7 +12,7 @@ export function buildExhaustedNotificationPart(from: string, reason: string) {
   return {
     type: "text" as const,
     text: `[${from} / ${reason}]\n${FALLBACK_MARKER}`,
-    synthetic: true,
+    ignored: true,
   };
 }
 
