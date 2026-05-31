@@ -4,22 +4,20 @@ export function buildFallbackNotificationPart(
   from: string,
   to: string,
   reason: string,
-): { type: "text"; text: string; ignored: boolean } {
+): { type: "text"; text: string } {
   return {
     type: "text" as const,
     text: `[${from} → ${to} / ${reason}]\n${FALLBACK_MARKER}`,
-    ignored: true,
   };
 }
 
 export function buildExhaustedNotificationPart(
   from: string,
   reason: string,
-): { type: "text"; text: string; ignored: boolean } {
+): { type: "text"; text: string } {
   return {
     type: "text" as const,
     text: `[${from} / ${reason}]\n${FALLBACK_MARKER}`,
-    ignored: true,
   };
 }
 

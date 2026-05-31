@@ -52,12 +52,6 @@ export const CONTEXT_OVERFLOW_PATTERNS: readonly string[] = [
 /** Delay after aborting a session before sending a new prompt (ms) */
 export const ABORT_DELAY_MS = 300;
 
-/** Duration for toast notifications (ms) */
-export const TOAST_DURATION_MS = 5_000;
-
-/** Duration for long/important toast notifications (ms) */
-export const TOAST_DURATION_LONG_MS = 8_000;
-
 export const LARGE_CONTEXT_CONTINUATION = "Continue";
 export const RETURN_CONTINUATION =
   "If there is remaining work from the previous task, continue it. Otherwise, provide a summary of what was completed.";
