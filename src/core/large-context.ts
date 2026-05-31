@@ -1,8 +1,5 @@
 import { getAgentLargeContextModel } from "@/config/config";
-import {
-  LARGE_CONTEXT_CONTINUATION,
-  RETURN_CONTINUATION,
-} from "@/config/constants";
+import { LARGE_CONTEXT_CONTINUATION, RETURN_CONTINUATION } from "@/config/constants";
 import type { FallbackConfig, ResolvedModel } from "@/config/types";
 import {
   clearActiveFallbackParams,
@@ -91,7 +88,13 @@ export async function handleLargeContextSwitch(
     await showTuiNotification(
       context,
       sessionID,
-      [buildFallbackNotificationPart(formatModelKey(original), formatModelKey(largeModel), "Switching to large context model")],
+      [
+        buildFallbackNotificationPart(
+          formatModelKey(original),
+          formatModelKey(largeModel),
+          "Switching to large context model",
+        ),
+      ],
       logger,
     );
 

@@ -116,9 +116,7 @@ export async function createPlugin(context: PluginInput): Promise<PluginHooks> {
         if (ok) {
           await logger.info(`Updated to ${info.latest}. Restart opencode to apply.`);
         } else {
-          await logger.warn(
-            `Auto-update failed. Run manually: bun update opencode-auto-fallback`,
-          );
+          await logger.warn(`Auto-update failed. Run manually: bun update opencode-auto-fallback`);
         }
       })
       .catch(async (err) => {

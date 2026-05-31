@@ -111,7 +111,12 @@ export async function tryFallbackChain(
   await showTuiNotification(
     context,
     sessionID,
-    [buildExhaustedNotificationPart(fromModel ? formatModelKey(fromModel) : "unknown", "All fallback models exhausted")],
+    [
+      buildExhaustedNotificationPart(
+        fromModel ? formatModelKey(fromModel) : "unknown",
+        "All fallback models exhausted",
+      ),
+    ],
     logger,
   );
   await logger.error("All fallback models exhausted", {
