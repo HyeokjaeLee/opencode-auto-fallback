@@ -1,5 +1,9 @@
 import { getAgentLargeContextModel, getRegisteredAgentNames, loadConfig } from "@/config/config";
-import { COMPACTION_FALLBACK_TOKEN_LIMIT } from "@/config/constants";
+import {
+  COMPACTION_FALLBACK_TOKEN_LIMIT,
+  TOAST_DURATION_LONG_MS,
+  TOAST_DURATION_MS,
+} from "@/config/constants";
 import type { FallbackConfig } from "@/config/types";
 import { createEventHandler } from "@/hooks/events";
 import {
@@ -14,6 +18,7 @@ import {
   getSessionOriginalAgent,
   hasModelChanged,
   isRegisteredAgent,
+  setLastUserPrompt,
   setCurrentModel,
   setModelContextLimit,
   setModelInputLimit,
@@ -27,7 +32,7 @@ import { serializeError } from "@/utils/error";
 import { createLogger } from "@/utils/log";
 import { formatModelKey, isSameModel } from "@/utils/model";
 import type { Logger } from "@/utils/session-utils";
-import { abortSessionSafely } from "@/utils/session-utils";
+import { abortSessionSafely, showToastSafely } from "@/utils/session-utils";
 import { checkForUpdates, tryInstallUpdate } from "@/utils/update-checker";
 import { version as currentVersion } from "~/package.json";
 
@@ -112,11 +117,50 @@ export async function createPlugin(context: PluginInput): Promise<PluginHooks> {
 
         await logger.info(`Update available: ${info.current} → ${info.latest}`);
 
+        await context.sdk.tui.appendMessages([
+          {
+            role: "user",
+            parts: [
+              {
+                synthetic: true,
+                title: "🔔 opencode-auto-fallback Update Available",
+                text: `Version ${info.current} → ${info.latest}`,
+              },
+            ],
+          },
+        ]);
+
         const ok = await tryInstallUpdate(info.latest);
         if (ok) {
           await logger.info(`Updated to ${info.latest}. Restart opencode to apply.`);
+
+          await context.sdk.tui.appendMessages([
+            {
+              role: "user",
+              parts: [
+                {
+                  synthetic: true,
+                  title: "✅ opencode-auto-fallback Updated",
+                  text: `Version ${info.latest} installed. Restart opencode to apply changes.`,
+                },
+              ],
+            },
+          ]);
         } else {
           await logger.warn(`Auto-update failed. Run manually: bun update opencode-auto-fallback`);
+
+          await context.sdk.tui.appendMessages([
+            {
+              role: "user",
+              parts: [
+                {
+                  synthetic: true,
+                  title: "⚠️ opencode-auto-fallback Update Failed",
+                  text: "Auto-update failed. Run manually: bun update opencode-auto-fallback",
+                },
+              ],
+            },
+          ]);
         }
       })
       .catch(async (err) => {
@@ -148,6 +192,10 @@ export async function createPlugin(context: PluginInput): Promise<PluginHooks> {
     },
 
     "chat.params": createChatParamsHandler(config, logger, context),
+
+    "session.prompt": async (input: { sessionID: string; parts: unknown[] }) => {
+      setLastUserPrompt(input.sessionID, input.parts);
+    },
 
     "experimental.session.compacting": createCompactingHandler(config, logger),
 

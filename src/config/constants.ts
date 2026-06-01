@@ -58,6 +58,12 @@ export const RETURN_CONTINUATION =
 
 export const COMPACTION_FALLBACK_TOKEN_LIMIT = 30_000;
 
+/** Duration for standard toast notifications (ms) */
+export const TOAST_DURATION_MS = 5_000;
+
+/** Duration for long/important toast notifications (ms) */
+export const TOAST_DURATION_LONG_MS = 8_000;
+
 /** Default minimum fractional increase in context window required to trigger large context fallback */
 export const DEFAULT_MIN_CONTEXT_RATIO = 0.1;
 

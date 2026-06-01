@@ -10,6 +10,8 @@ const modelContextLimits = new Map<string, number>();
 const sessionOriginalAgent = new Map<string, string>();
 const sessionRestoreModel = new Map<string, ResolvedModel>();
 const registeredAgentSet = new Set<string>();
+const lastUserPrompt = new Map<string, unknown[]>();
+const lastUserPrompt = new Map<string, unknown[]>();
 
 export function setActiveFallbackParams(sessionID: string, model: FallbackModel): void {
   activeFallbackParams.set(sessionID, model);
@@ -143,6 +145,7 @@ export function cleanupSession(sessionID: string): void {
   sessionRestoreModel.delete(sessionID);
   compactionTarget.delete(sessionID);
   opencodeCompacting.delete(sessionID);
+  lastUserPrompt.delete(sessionID);
 }
 
 export function setRegisteredAgents(agents: string[]): void {
@@ -191,4 +194,57 @@ export function clearOpencodeCompacting(sessionID: string): void {
 
 export function isOpencodeCompacting(sessionID: string): boolean {
   return opencodeCompacting.has(sessionID);
+}
+
+export function setLastUserPrompt(sessionID: string, parts: unknown[]): void {
+  lastUserPrompt.set(sessionID, parts);
+}
+
+export function getLastUserPrompt(sessionID: string): unknown[] | undefined {
+  return lastUserPrompt.get(sessionID);
+}
+
+export function clearLastUserPrompt(sessionID: string): void {
+  lastUserPrompt.delete(sessionID);
+}
+
+export function cleanupSession(sessionID: string): void {
+  largeContextSessions.delete(sessionID);
+  currentModelSessions.delete(sessionID);
+  sessionCooldownModel.delete(sessionID);
+  largeContextPhase.delete(sessionID);
+  activeFallbackParams.delete(sessionID);
+  sessionOriginalAgent.delete(sessionID);
+  sessionRestoreModel.delete(sessionID);
+  compactionTarget.delete(sessionID);
+  opencodeCompacting.delete(sessionID);
+  lastUserPrompt.delete(sessionID);
+}
+
+export function isOpencodeCompacting(sessionID: string): boolean {
+  return opencodeCompacting.has(sessionID);
+}
+
+export function setLastUserPrompt(sessionID: string, parts: unknown[]): void {
+  lastUserPrompt.set(sessionID, parts);
+}
+
+export function getLastUserPrompt(sessionID: string): unknown[] | undefined {
+  return lastUserPrompt.get(sessionID);
+}
+
+export function clearLastUserPrompt(sessionID: string): void {
+  lastUserPrompt.delete(sessionID);
+}
+
+export function setLastUserPrompt(sessionID: string, parts: unknown[]): void {
+  lastUserPrompt.set(sessionID, parts);
+}
+
+export function getLastUserPrompt(sessionID: string): unknown[] | undefined {
+  return lastUserPrompt.get(sessionID);
+}
+
+export function clearLastUserPrompt(sessionID: string): void {
+  lastUserPrompt.delete(sessionID);
 }

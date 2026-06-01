@@ -1,6 +1,6 @@
 import { adaptMessages, getModelFromMessage } from "@/adapters/sdk-adapter";
 import { ABORT_DELAY_MS } from "@/config/constants";
-import type { MessageInfo, MessageWithParts } from "@/config/types";
+import type { MessageInfo, MessageWithParts, ToastOptions } from "@/config/types";
 import type { PromptPart } from "@/core/message";
 import { extractUserParts } from "@/core/message";
 import { getCurrentModel } from "@/state/context-state";
@@ -10,6 +10,13 @@ import { serializeError } from "./error";
 import type { createLogger } from "./log";
 import type { PluginInput } from "@opencode-ai/plugin";
 import type { Message as SDKMessage, Part as SDKPart } from "@opencode-ai/sdk";
+
+/** tui is available at runtime but not typed in the SDK */
+interface ToastClient {
+  showToast: (params: { body: ToastOptions }) => Promise<unknown>;
+}
+
+type ClientWithTui = PluginInput["client"] & { tui?: ToastClient };
 
 interface ChatMessageInput {
   sessionID: string;
@@ -21,6 +28,21 @@ interface ChatMessageInput {
 }
 
 export type Logger = ReturnType<typeof createLogger>;
+
+export async function showToastSafely(
+  context: PluginInput,
+  body: ToastOptions,
+  logger: Logger,
+): Promise<void> {
+  try {
+    const client = context.client as ClientWithTui;
+    await client.tui.showToast({ body });
+  } catch (err) {
+    await logger.warn("Toast failed", {
+      error: serializeError(err),
+    });
+  }
+}
 
 export async function showTuiNotification(
   context: PluginInput,

@@ -92,3 +92,10 @@ export interface MessageWithParts {
 }
 
 export type LargeContextPhase = "pending" | "active" | "summarizing";
+
+export interface ToastOptions {
+  title?: string;
+  message: string;
+  variant: "info" | "success" | "warning" | "error";
+  duration?: number;
+}
