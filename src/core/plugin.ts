@@ -115,7 +115,6 @@ export async function createPlugin(context: PluginInput): Promise<PluginHooks> {
         if (!info.hasUpdate) return;
 
         await logger.info(`Update available: ${info.current} → ${info.latest}`);
-
         await showToastSafely(
           context,
           {
@@ -130,7 +129,6 @@ export async function createPlugin(context: PluginInput): Promise<PluginHooks> {
         const ok = await tryInstallUpdate(info.latest);
         if (ok) {
           await logger.info(`Updated to ${info.latest}. Restart opencode to apply.`);
-
           await showToastSafely(
             context,
             {
@@ -142,8 +140,9 @@ export async function createPlugin(context: PluginInput): Promise<PluginHooks> {
             logger,
           );
         } else {
-          await logger.warn(`Auto-update failed. Run manually: bun update opencode-auto-fallback`);
-
+          await logger.warn(
+            `Auto-update failed. Run manually: bun update opencode-auto-fallback`,
+          );
           await showToastSafely(
             context,
             {
