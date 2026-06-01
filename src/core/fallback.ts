@@ -2,11 +2,9 @@ import { getFallbackChain } from "@/config/config";
 import { BACKOFF_BASE_MS, LARGE_CONTEXT_CONTINUATION } from "@/config/constants";
 import type { FallbackConfig, FallbackModel } from "@/config/types";
 import {
-  clearLastUserPrompt,
   deleteLargeContextPhase,
   getCurrentModel,
   getLargeContextPhase,
-  getLastUserPrompt,
   getSessionOriginalAgent,
   setActiveFallbackParams,
   setSessionCooldownModel,
@@ -45,12 +43,7 @@ export async function fallbackToModel(
       );
     }
 
-    const lastPrompt = getLastUserPrompt(sessionID);
-    const parts = lastPrompt ?? [buildSyntheticContinuationPart(LARGE_CONTEXT_CONTINUATION)];
-
-    if (lastPrompt) {
-      clearLastUserPrompt(sessionID);
-    }
+    const parts = [buildSyntheticContinuationPart(LARGE_CONTEXT_CONTINUATION)];
 
     await context.client.session.prompt({
       path: { id: sessionID },

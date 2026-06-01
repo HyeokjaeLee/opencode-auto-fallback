@@ -18,7 +18,6 @@ import {
   getSessionOriginalAgent,
   hasModelChanged,
   isRegisteredAgent,
-  setLastUserPrompt,
   setCurrentModel,
   setModelContextLimit,
   setModelInputLimit,
@@ -117,50 +116,44 @@ export async function createPlugin(context: PluginInput): Promise<PluginHooks> {
 
         await logger.info(`Update available: ${info.current} → ${info.latest}`);
 
-        await context.sdk.tui.appendMessages([
+        await showToastSafely(
+          context,
           {
-            role: "user",
-            parts: [
-              {
-                synthetic: true,
-                title: "🔔 opencode-auto-fallback Update Available",
-                text: `Version ${info.current} → ${info.latest}`,
-              },
-            ],
+            title: "Updating Plugin",
+            message: `opencode-auto-fallback ${info.current} → ${info.latest}`,
+            variant: "info",
+            duration: TOAST_DURATION_MS,
           },
-        ]);
+          logger,
+        );
 
         const ok = await tryInstallUpdate(info.latest);
         if (ok) {
           await logger.info(`Updated to ${info.latest}. Restart opencode to apply.`);
 
-          await context.sdk.tui.appendMessages([
+          await showToastSafely(
+            context,
             {
-              role: "user",
-              parts: [
-                {
-                  synthetic: true,
-                  title: "✅ opencode-auto-fallback Updated",
-                  text: `Version ${info.latest} installed. Restart opencode to apply changes.`,
-                },
-              ],
+              title: "Plugin Updated",
+              message: `opencode-auto-fallback updated to ${info.latest}. Restart opencode to apply.`,
+              variant: "success",
+              duration: TOAST_DURATION_LONG_MS,
             },
-          ]);
+            logger,
+          );
         } else {
           await logger.warn(`Auto-update failed. Run manually: bun update opencode-auto-fallback`);
 
-          await context.sdk.tui.appendMessages([
+          await showToastSafely(
+            context,
             {
-              role: "user",
-              parts: [
-                {
-                  synthetic: true,
-                  title: "⚠️ opencode-auto-fallback Update Failed",
-                  text: "Auto-update failed. Run manually: bun update opencode-auto-fallback",
-                },
-              ],
+              title: "Update Failed",
+              message: `Could not auto-update. Run manually: bun update opencode-auto-fallback`,
+              variant: "warning",
+              duration: TOAST_DURATION_LONG_MS,
             },
-          ]);
+            logger,
+          );
         }
       })
       .catch(async (err) => {
@@ -192,10 +185,6 @@ export async function createPlugin(context: PluginInput): Promise<PluginHooks> {
     },
 
     "chat.params": createChatParamsHandler(config, logger, context),
-
-    "session.prompt": async (input: { sessionID: string; parts: unknown[] }) => {
-      setLastUserPrompt(input.sessionID, input.parts);
-    },
 
     "experimental.session.compacting": createCompactingHandler(config, logger),
 
