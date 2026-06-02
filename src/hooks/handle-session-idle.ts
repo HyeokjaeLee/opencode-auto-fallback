@@ -7,14 +7,19 @@ import {
 } from "@/core/large-context";
 import {
   clearCompactionTarget,
+  clearOpencodeCompacting,
   deleteLargeContextPhase,
   getCurrentModel,
   getLargeContextPhase,
+  getMaxSelfCompactionCycles,
   getModelContextLimit,
   getSessionOriginalAgent,
   hasRegisteredAgents,
+  incrementSelfCompactionCount,
   isOpencodeCompacting,
   isRegisteredAgent,
+  isReturnDeferred,
+  resetSelfCompactionCount,
   setCompactionTarget,
   setSessionOriginalAgent,
 } from "@/state/context-state";
@@ -163,8 +168,21 @@ export async function handleSessionIdle(
 
     const largeThreshold = await checkContextThreshold(props.sessionID, context, logger);
     if (largeThreshold.atThreshold) {
+      const selfCount = incrementSelfCompactionCount(props.sessionID);
+
+      if (selfCount > getMaxSelfCompactionCycles()) {
+        await logger.info("Idle: max self-compaction cycles reached, switching back to original", {
+          sessionID: props.sessionID,
+          selfCompactionCount: selfCount,
+        });
+        resetSelfCompactionCount(props.sessionID);
+        await handleLargeContextReturn(props.sessionID, config, context, logger);
+        return;
+      }
+
       await logger.info("Idle: large model context full, self-compacting", {
         sessionID: props.sessionID,
+        selfCompactionCount: selfCount,
       });
       setCompactionTarget(props.sessionID, "large");
       try {
@@ -179,6 +197,7 @@ export async function handleSessionIdle(
         });
       } catch {
         clearCompactionTarget(props.sessionID);
+        clearOpencodeCompacting(props.sessionID);
         await logger.info("Idle: self-compaction failed, cleared compactionTarget", {
           sessionID: props.sessionID,
         });
@@ -207,6 +226,15 @@ export async function handleSessionIdle(
     }
 
     if (!autoContinuePending) {
+      if (isReturnDeferred(props.sessionID)) {
+        await logger.info(
+          "Idle: return deferred — waiting for user activity or context reduction",
+          {
+            sessionID: props.sessionID,
+          },
+        );
+        return;
+      }
       await logger.info("Idle: return condition met (no pending tools)", {
         sessionID: props.sessionID,
       });

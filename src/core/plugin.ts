@@ -24,6 +24,10 @@ import {
   setOpencodeCompacting,
   setRegisteredAgents,
   setSessionOriginalAgent,
+  setCompactionTarget,
+  setRestoreModel,
+  clearReturnDeferred,
+  isSyntheticPromptActive,
 } from "@/state/context-state";
 import { deactivateCooldown } from "@/state/session-state";
 import { checkContextThreshold } from "@/utils/context";
@@ -140,9 +144,7 @@ export async function createPlugin(context: PluginInput): Promise<PluginHooks> {
             logger,
           );
         } else {
-          await logger.warn(
-            `Auto-update failed. Run manually: bun update opencode-auto-fallback`,
-          );
+          await logger.warn(`Auto-update failed. Run manually: bun update opencode-auto-fallback`);
           await showToastSafely(
             context,
             {
@@ -207,6 +209,10 @@ function createChatParamsHandler(
       setSessionOriginalAgent(input.sessionID, input.agent);
     }
 
+    if (!isSyntheticPromptActive(input.sessionID)) {
+      clearReturnDeferred(input.sessionID);
+    }
+
     if (input.model) {
       const { changed, previous: prev } = hasModelChanged(
         input.sessionID,
@@ -215,6 +221,20 @@ function createChatParamsHandler(
       );
 
       setCurrentModel(input.sessionID, input.model.providerID, input.model.id);
+
+      const ctxLimit = input.model.limit.context;
+      if (ctxLimit !== undefined) {
+        const modelKey = formatModelKey({
+          providerID: input.model.providerID,
+          modelID: input.model.id,
+        });
+        setModelContextLimit(modelKey, ctxLimit);
+        const rawLimit = input.model.limit as {
+          context: number;
+          input?: number;
+        };
+        if (rawLimit.input !== undefined) setModelInputLimit(modelKey, rawLimit.input);
+      }
 
       if (changed) {
         deactivateCooldown(input.sessionID);
@@ -248,6 +268,7 @@ function createChatParamsHandler(
                 }),
                 phase,
               });
+              setRestoreModel(input.sessionID, input.model.providerID, input.model.id);
               await abortSessionSafely(input.sessionID, context);
               return;
             }
@@ -257,25 +278,16 @@ function createChatParamsHandler(
 
       getOrSetOriginalModel(input.sessionID, input.model.providerID, input.model.id);
 
-      const ctxLimit = input.model.limit.context;
-      if (ctxLimit !== undefined) {
+      if (ctxLimit !== undefined && changed) {
         const modelKey = formatModelKey({
           providerID: input.model.providerID,
           modelID: input.model.id,
         });
-        setModelContextLimit(modelKey, ctxLimit);
-        const rawLimit = input.model.limit as {
-          context: number;
-          input?: number;
-        };
-        if (rawLimit.input !== undefined) setModelInputLimit(modelKey, rawLimit.input);
-        if (changed) {
-          await logger.info("Detected model context limit", {
-            sessionID: input.sessionID,
-            model: modelKey,
-            contextLimit: ctxLimit,
-          });
-        }
+        await logger.info("Detected model context limit", {
+          sessionID: input.sessionID,
+          model: modelKey,
+          contextLimit: ctxLimit,
+        });
       }
 
       const agent = getSessionOriginalAgent(input.sessionID) ?? input.agent;
@@ -384,9 +396,10 @@ function createCompactingHandler(
           largeLimit,
         });
       } else {
+        setCompactionTarget(input.sessionID, "default");
         setOpencodeCompacting(input.sessionID);
         await logger.info(
-          "Compacting: opencode/internal compaction during active phase — waiting",
+          "Compacting: manual/internal compact during active phase — marked default",
           {
             sessionID: input.sessionID,
           },

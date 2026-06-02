@@ -1,6 +1,26 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { cleanupSession, setCurrentModel, setModelContextLimit } from "@/state/context-state";
+import type { FallbackConfig } from "@/config/types";
+import { handleLargeContextCompletion } from "@/core/large-context";
+import { handleSessionError } from "@/hooks/handle-session-error";
+import {
+  cleanupSession,
+  getLargeContextPhase,
+  getOrSetOriginalModel,
+  getRecoveryModel,
+  getSelfCompactionCount,
+  incrementSelfCompactionCount,
+  isOpencodeCompacting,
+  isReturnDeferred,
+  setCurrentModel,
+  setCompactionTarget,
+  setLargeContextPhase,
+  setModelContextLimit,
+  setOpencodeCompacting,
+  setRegisteredAgents,
+  setRestoreModel,
+  setSessionOriginalAgent,
+} from "@/state/context-state";
 import { checkContextThreshold } from "@/utils/context";
 
 import { createMockContext } from "./mocks";
@@ -32,6 +52,21 @@ const noopLogger = {
   warn: () => Promise.resolve(),
   error: () => Promise.resolve(),
 };
+
+function makeConfig(overrides?: Partial<FallbackConfig>): FallbackConfig {
+  return {
+    enabled: true,
+    autoUpdate: false,
+    defaultFallback: [],
+    defaultLargeContextModel: false,
+    defaultMinContextRatio: 0.1,
+    agents: {},
+    cooldownMs: 60000,
+    maxRetries: 2,
+    logging: false,
+    ...overrides,
+  };
+}
 
 describe("checkContextThreshold", () => {
   afterEach(() => {
@@ -217,5 +252,312 @@ describe("checkContextThreshold", () => {
     // threshold = 200000 * 0.95 = 190000
     // 190000 >= 190000 → true
     expect(result.atThreshold).toBe(true);
+  });
+});
+
+describe("handleLargeContextCompletion", () => {
+  const CID = "test-completion";
+
+  afterEach(() => {
+    cleanupSession(CID);
+  });
+
+  it("switches back to original model when context fits", async () => {
+    setCurrentModel(CID, "google", "gemini-2.5-pro");
+    getOrSetOriginalModel(CID, "anthropic", "claude-sonnet-4");
+    setRestoreModel(CID, "anthropic", "claude-sonnet-4");
+    setModelContextLimit("anthropic/claude-sonnet-4", 200000);
+
+    const ctx = createMockContext({
+      messages: vi.fn().mockResolvedValue({
+        data: [makeAssistantMessage({ input: 10000, output: 5000 })],
+      }),
+    });
+
+    await handleLargeContextCompletion(CID, makeConfig(), ctx, noopLogger);
+
+    // Should switch back — prompt called with original model
+    expect(ctx.client.session.prompt).toHaveBeenCalledWith(
+      expect.objectContaining({
+        path: { id: CID },
+        body: expect.objectContaining({
+          model: { providerID: "anthropic", modelID: "claude-sonnet-4" },
+        }),
+      }),
+    );
+  });
+
+  it("stays on large model when context does not fit on original", async () => {
+    setRegisteredAgents(["test-agent"]);
+    setSessionOriginalAgent(CID, "test-agent");
+    setCurrentModel(CID, "google", "gemini-2.5-pro");
+    getOrSetOriginalModel(CID, "anthropic", "claude-sonnet-4");
+    setRestoreModel(CID, "anthropic", "claude-sonnet-4");
+    setModelContextLimit("anthropic/claude-sonnet-4", 20000);
+
+    const config = makeConfig({
+      agents: {
+        "test-agent": { largeContextModel: "google/gemini-2.5-pro" },
+      },
+    });
+
+    const ctx = createMockContext({
+      messages: vi.fn().mockResolvedValue({
+        data: [makeAssistantMessage({ input: 50000, output: 10000 })],
+      }),
+    });
+
+    await handleLargeContextCompletion(CID, config, ctx, noopLogger);
+
+    // Should NOT switch back — prompt called with configured large model
+    expect(ctx.client.session.prompt).toHaveBeenCalledWith(
+      expect.objectContaining({
+        path: { id: CID },
+        body: expect.objectContaining({
+          model: { providerID: "google", modelID: "gemini-2.5-pro" },
+        }),
+      }),
+    );
+  });
+
+  it("clears phase and restore model regardless of fit", async () => {
+    setCurrentModel(CID, "google", "gemini-2.5-pro");
+    setRestoreModel(CID, "anthropic", "claude-sonnet-4");
+    setModelContextLimit("anthropic/claude-sonnet-4", 200000);
+
+    const ctx = createMockContext({
+      messages: vi.fn().mockResolvedValue({
+        data: [makeAssistantMessage({ input: 10000, output: 5000 })],
+      }),
+    });
+
+    setLargeContextPhase(CID, "summarizing");
+    await handleLargeContextCompletion(CID, makeConfig(), ctx, noopLogger);
+
+    expect(getLargeContextPhase(CID)).toBeUndefined();
+    expect(getRecoveryModel(CID)).toBeUndefined();
+  });
+
+  it("resets self-compaction count on completion", async () => {
+    setCurrentModel(CID, "google", "gemini-2.5-pro");
+    getOrSetOriginalModel(CID, "anthropic", "claude-sonnet-4");
+    setRestoreModel(CID, "anthropic", "claude-sonnet-4");
+    setModelContextLimit("anthropic/claude-sonnet-4", 200000);
+
+    incrementSelfCompactionCount(CID);
+    incrementSelfCompactionCount(CID);
+
+    const ctx = createMockContext({
+      messages: vi.fn().mockResolvedValue({
+        data: [makeAssistantMessage({ input: 10000, output: 5000 })],
+      }),
+    });
+
+    await handleLargeContextCompletion(CID, makeConfig(), ctx, noopLogger);
+
+    expect(getSelfCompactionCount(CID)).toBe(0);
+  });
+
+  it("sets returnDeferred when context does not fit on original model", async () => {
+    setRegisteredAgents(["test-agent"]);
+    setSessionOriginalAgent(CID, "test-agent");
+    setCurrentModel(CID, "google", "gemini-2.5-pro");
+    getOrSetOriginalModel(CID, "anthropic", "claude-sonnet-4");
+    setRestoreModel(CID, "anthropic", "claude-sonnet-4");
+    setModelContextLimit("anthropic/claude-sonnet-4", 20000);
+
+    const config = makeConfig({
+      agents: { "test-agent": { largeContextModel: "google/gemini-2.5-pro" } },
+    });
+
+    const ctx = createMockContext({
+      messages: vi.fn().mockResolvedValue({
+        data: [makeAssistantMessage({ input: 50000, output: 10000 })],
+      }),
+    });
+
+    await handleLargeContextCompletion(CID, config, ctx, noopLogger);
+
+    expect(isReturnDeferred(CID)).toBe(true);
+    expect(getLargeContextPhase(CID)).toBe("active");
+  });
+});
+
+describe("compaction loop prevention", () => {
+  const SID = "test-loop-prevention";
+
+  afterEach(() => {
+    cleanupSession(SID);
+  });
+
+  it("manual /compact overflow: large model switch → compaction → context fits → switch back", async () => {
+    setRegisteredAgents(["test-agent"]);
+    setSessionOriginalAgent(SID, "test-agent");
+    setCurrentModel(SID, "google", "gemini-2.5-pro");
+    getOrSetOriginalModel(SID, "anthropic", "claude-sonnet-4");
+    setRestoreModel(SID, "anthropic", "claude-sonnet-4");
+    setModelContextLimit("anthropic/claude-sonnet-4", 200000);
+    setModelContextLimit("google/gemini-2.5-pro", 1000000);
+
+    const config = makeConfig({
+      agents: { "test-agent": { largeContextModel: "google/gemini-2.5-pro" } },
+    });
+
+    const ctx = createMockContext({
+      messages: vi.fn().mockResolvedValue({
+        data: [makeAssistantMessage({ input: 10000, output: 5000 })],
+      }),
+    });
+
+    setLargeContextPhase(SID, "summarizing");
+    await handleLargeContextCompletion(SID, config, ctx, noopLogger);
+
+    expect(getLargeContextPhase(SID)).toBeUndefined();
+    expect(ctx.client.session.prompt).toHaveBeenCalledWith(
+      expect.objectContaining({
+        body: expect.objectContaining({
+          model: { providerID: "anthropic", modelID: "claude-sonnet-4" },
+        }),
+      }),
+    );
+  });
+
+  it("manual /compact overflow: large model switch → compaction → context doesn't fit → stay on large", async () => {
+    setRegisteredAgents(["test-agent"]);
+    setSessionOriginalAgent(SID, "test-agent");
+    setCurrentModel(SID, "google", "gemini-2.5-pro");
+    getOrSetOriginalModel(SID, "anthropic", "claude-sonnet-4");
+    setRestoreModel(SID, "anthropic", "claude-sonnet-4");
+    setModelContextLimit("anthropic/claude-sonnet-4", 20000);
+    setModelContextLimit("google/gemini-2.5-pro", 1000000);
+
+    const config = makeConfig({
+      agents: { "test-agent": { largeContextModel: "google/gemini-2.5-pro" } },
+    });
+
+    const ctx = createMockContext({
+      messages: vi.fn().mockResolvedValue({
+        data: [makeAssistantMessage({ input: 50000, output: 10000 })],
+      }),
+    });
+
+    setLargeContextPhase(SID, "summarizing");
+    await handleLargeContextCompletion(SID, config, ctx, noopLogger);
+
+    expect(getLargeContextPhase(SID)).toBe("active");
+    expect(isReturnDeferred(SID)).toBe(true);
+    expect(ctx.client.session.prompt).toHaveBeenCalledWith(
+      expect.objectContaining({
+        body: expect.objectContaining({
+          model: { providerID: "google", modelID: "gemini-2.5-pro" },
+        }),
+      }),
+    );
+  });
+
+  it("unknown model limit treated as unsafe for switch-back", async () => {
+    setRegisteredAgents(["test-agent"]);
+    setSessionOriginalAgent(SID, "test-agent");
+    setCurrentModel(SID, "google", "gemini-2.5-pro");
+    getOrSetOriginalModel(SID, "anthropic", "claude-sonnet-4");
+    setRestoreModel(SID, "anthropic", "claude-sonnet-4");
+    setModelContextLimit("google/gemini-2.5-pro", 1000000);
+
+    const config = makeConfig({
+      agents: { "test-agent": { largeContextModel: "google/gemini-2.5-pro" } },
+    });
+
+    const ctx = createMockContext({
+      messages: vi.fn().mockResolvedValue({
+        data: [makeAssistantMessage({ input: 50000, output: 10000 })],
+      }),
+    });
+
+    setLargeContextPhase(SID, "summarizing");
+    await handleLargeContextCompletion(SID, config, ctx, noopLogger);
+
+    expect(getLargeContextPhase(SID)).toBe("active");
+    expect(isReturnDeferred(SID)).toBe(true);
+  });
+});
+
+describe("error handler compaction target routing", () => {
+  const SID = "test-error-routing";
+
+  afterEach(() => {
+    cleanupSession(SID);
+  });
+
+  it("active phase + default target → routes to handleLargeContextReturn", async () => {
+    setRegisteredAgents(["test-agent"]);
+    setSessionOriginalAgent(SID, "test-agent");
+    setCurrentModel(SID, "google", "gemini-2.5-pro");
+    getOrSetOriginalModel(SID, "anthropic", "claude-sonnet-4");
+    setRestoreModel(SID, "anthropic", "claude-sonnet-4");
+    setModelContextLimit("anthropic/claude-sonnet-4", 200000);
+    setModelContextLimit("google/gemini-2.5-pro", 1000000);
+    setLargeContextPhase(SID, "active");
+    setCompactionTarget(SID, "default");
+    setOpencodeCompacting(SID);
+
+    const config = makeConfig({
+      agents: { "test-agent": { largeContextModel: "google/gemini-2.5-pro" } },
+    });
+
+    const mockSummarize = vi.fn().mockResolvedValue({ data: null });
+    const ctx = createMockContext({ summarize: mockSummarize });
+
+    await handleSessionError(config, noopLogger, ctx, {
+      type: "session.error",
+      properties: {
+        sessionID: SID,
+        error: {
+          name: "Error",
+          data: {
+            message: "context length exceeded",
+            statusCode: 400,
+          },
+        },
+      },
+    });
+
+    expect(mockSummarize).toHaveBeenCalled();
+    expect(getLargeContextPhase(SID)).toBe("summarizing");
+  });
+
+  it("summarize failure clears opencodeCompacting", async () => {
+    setRegisteredAgents(["test-agent"]);
+    setSessionOriginalAgent(SID, "test-agent");
+    setCurrentModel(SID, "google", "gemini-2.5-pro");
+    getOrSetOriginalModel(SID, "anthropic", "claude-sonnet-4");
+    setRestoreModel(SID, "anthropic", "claude-sonnet-4");
+    setModelContextLimit("anthropic/claude-sonnet-4", 200000);
+    setModelContextLimit("google/gemini-2.5-pro", 1000000);
+    setLargeContextPhase(SID, "active");
+    setCompactionTarget(SID, "large");
+    setOpencodeCompacting(SID);
+
+    const config = makeConfig({
+      agents: { "test-agent": { largeContextModel: "google/gemini-2.5-pro" } },
+    });
+
+    const mockSummarize = vi.fn().mockRejectedValue(new Error("compaction failed"));
+    const ctx = createMockContext({ summarize: mockSummarize });
+
+    await handleSessionError(config, noopLogger, ctx, {
+      type: "session.error",
+      properties: {
+        sessionID: SID,
+        error: {
+          name: "Error",
+          data: {
+            message: "context length exceeded",
+            statusCode: 400,
+          },
+        },
+      },
+    });
+
+    expect(isOpencodeCompacting(SID)).toBe(false);
   });
 });

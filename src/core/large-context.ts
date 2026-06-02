@@ -1,5 +1,9 @@
 import { getAgentLargeContextModel } from "@/config/config";
-import { LARGE_CONTEXT_CONTINUATION, RETURN_CONTINUATION } from "@/config/constants";
+import {
+  CONTEXT_THRESHOLD_RATIO,
+  LARGE_CONTEXT_CONTINUATION,
+  RETURN_CONTINUATION,
+} from "@/config/constants";
 import type { FallbackConfig, ResolvedModel } from "@/config/types";
 import {
   clearActiveFallbackParams,
@@ -7,13 +11,19 @@ import {
   deleteRestoreModel,
   getCurrentModel,
   getLargeContextPhase,
+  getModelContextLimit,
+  getModelInputLimit,
   getOriginalModel,
   getRecoveryModel,
   getSessionOriginalAgent,
   isRegisteredAgent,
+  resetSelfCompactionCount,
   setActiveFallbackParams,
   setLargeContextPhase,
   setRestoreModel,
+  setReturnDeferred,
+  clearSyntheticPromptActive,
+  setSyntheticPromptActive,
 } from "@/state/context-state";
 import { isModelInCooldown } from "@/state/provider-state";
 import { serializeError } from "@/utils/error";
@@ -33,6 +43,92 @@ export function shouldSkipLargeContextFallback(
   minContextRatio: number,
 ): boolean {
   return largeWindow / currentWindow <= 1 + minContextRatio;
+}
+
+async function checkContextThresholdForModel(
+  sessionID: string,
+  context: PluginInput,
+  logger: Logger,
+  model: { providerID: string; modelID: string },
+): Promise<{ atThreshold: boolean; usage: number; limit: number }> {
+  try {
+    const msgResp = await context.client.session.messages({
+      path: { id: sessionID },
+    });
+    const raw = (msgResp.data ?? []) as Array<{
+      info: {
+        role: string;
+        tokens?: {
+          input: number;
+          output?: number;
+          reasoning?: number;
+          cache?: { read?: number; write?: number };
+        };
+      };
+    }>;
+
+    let totalTokens = 0;
+    let lastInput = 0;
+    let lastOutput = 0;
+    let lastReasoning = 0;
+    let lastCacheRead = 0;
+    let lastCacheWrite = 0;
+
+    for (const m of raw) {
+      if (m.info.role === "assistant" && m.info.tokens) {
+        const t = m.info.tokens;
+        const tokenSum =
+          t.input +
+          (t.output ?? 0) +
+          (t.reasoning ?? 0) +
+          (t.cache?.read ?? 0) +
+          (t.cache?.write ?? 0);
+        if (tokenSum > 0) {
+          lastInput = t.input;
+          lastOutput = t.output ?? 0;
+          lastReasoning = t.reasoning ?? 0;
+          lastCacheRead = t.cache?.read ?? 0;
+          lastCacheWrite = t.cache?.write ?? 0;
+          totalTokens = tokenSum;
+        }
+      }
+    }
+
+    if (totalTokens === 0) {
+      return { atThreshold: false, usage: 0, limit: 0 };
+    }
+
+    const modelKey = formatModelKey(model);
+    const ctxLimit = getModelContextLimit(modelKey);
+    if (!ctxLimit || ctxLimit === 0) {
+      return { atThreshold: true, usage: totalTokens, limit: 0 };
+    }
+
+    const inputLimit = getModelInputLimit(modelKey);
+    const count = lastInput + lastOutput + lastReasoning + lastCacheRead + lastCacheWrite;
+    const usable = inputLimit ?? ctxLimit;
+
+    const atThreshold = count >= usable * CONTEXT_THRESHOLD_RATIO;
+
+    await logger.info("Context threshold check for model", {
+      sessionID,
+      model: modelKey,
+      count,
+      usable,
+      usage: count,
+      limit: ctxLimit,
+      atThreshold,
+    });
+
+    return { atThreshold, usage: count, limit: ctxLimit };
+  } catch (err) {
+    await logger.info("Context threshold check error", {
+      sessionID,
+      model: formatModelKey(model),
+      error: serializeError(err),
+    });
+    return { atThreshold: false, usage: 0, limit: 0 };
+  }
 }
 
 export async function handleLargeContextSwitch(
@@ -98,6 +194,7 @@ export async function handleLargeContextSwitch(
       logger,
     );
 
+    setSyntheticPromptActive(sessionID);
     context.client.session
       .prompt({
         path: { id: sessionID },
@@ -112,6 +209,9 @@ export async function handleLargeContextSwitch(
           sessionID,
           error: serializeError(err),
         });
+      })
+      .finally(() => {
+        clearSyntheticPromptActive(sessionID);
       });
 
     return true;
@@ -181,6 +281,7 @@ export async function handleLargeContextReturn(
 
 export async function handleLargeContextCompletion(
   sessionID: string,
+  config: FallbackConfig,
   context: PluginInput,
   logger: Logger,
 ): Promise<void> {
@@ -194,44 +295,102 @@ export async function handleLargeContextCompletion(
     return;
   }
 
-  await logger.info("Large context work done, compaction complete, restoring model", {
+  // Check if original model can handle the compacted context
+  const thresholdCheck = await checkContextThresholdForModel(sessionID, context, logger, original);
+
+  const canFitOnOriginal = !thresholdCheck.atThreshold;
+
+  await logger.info("Large context work done, compaction complete", {
     sessionID,
     originalModel: formatModelKey(original),
+    canFitOnOriginal,
+    contextUsage: thresholdCheck.usage,
+    contextLimit: thresholdCheck.limit,
   });
 
-  deleteLargeContextPhase(sessionID);
-  deleteRestoreModel(sessionID);
+  if (canFitOnOriginal) {
+    deleteLargeContextPhase(sessionID);
+    deleteRestoreModel(sessionID);
+    resetSelfCompactionCount(sessionID);
 
-  await showTuiNotification(
-    context,
-    sessionID,
-    [
-      buildFallbackNotificationPart(
-        formatModelKey(getCurrentModel(sessionID) ?? original),
-        formatModelKey(original),
-        "Returning to default context model",
-      ),
-    ],
-    logger,
-  );
+    await showTuiNotification(
+      context,
+      sessionID,
+      [
+        buildFallbackNotificationPart(
+          formatModelKey(getCurrentModel(sessionID) ?? original),
+          formatModelKey(original),
+          "Returning to default context model",
+        ),
+      ],
+      logger,
+    );
 
-  context.client.session
-    .prompt({
-      path: { id: sessionID },
-      body: {
-        model: { providerID: original.providerID, modelID: original.modelID },
-        parts: [buildSyntheticContinuationPart(RETURN_CONTINUATION)],
-      },
-    })
-    .catch(async (err) => {
+    let promptFailed = false;
+    setSyntheticPromptActive(sessionID);
+    try {
+      await context.client.session.prompt({
+        path: { id: sessionID },
+        body: {
+          model: { providerID: original.providerID, modelID: original.modelID },
+          parts: [buildSyntheticContinuationPart(RETURN_CONTINUATION)],
+        },
+      });
+    } catch (err) {
+      promptFailed = true;
       await logger.warn("Switch-back: continuation prompt failed", {
         sessionID,
         error: serializeError(err),
       });
+    }
+    clearSyntheticPromptActive(sessionID);
+
+    if (promptFailed) {
+      await logger.info("Switch-back: prompt failed, restoring phase for retry", {
+        sessionID,
+        model: formatModelKey(original),
+      });
+      setLargeContextPhase(sessionID, "active");
+      setRestoreModel(sessionID, original.providerID, original.modelID);
+    } else {
+      await logger.info("Switch-back: continuation sent, session resumed on original model", {
+        sessionID,
+        model: formatModelKey(original),
+      });
+    }
+  } else {
+    await logger.info("Switch-back: context still too large, staying on large model", {
+      sessionID,
+      originalModel: formatModelKey(original),
+      usage: thresholdCheck.usage,
+      limit: thresholdCheck.limit,
     });
 
-  await logger.info("Switch-back: continuation sent, session resumed on original model", {
-    sessionID,
-    model: formatModelKey(original),
-  });
+    setLargeContextPhase(sessionID, "active");
+    setReturnDeferred(sessionID);
+    resetSelfCompactionCount(sessionID);
+
+    const agent = getSessionOriginalAgent(sessionID);
+    const largeModel = agent ? getAgentLargeContextModel(config, agent) : null;
+    if (largeModel) {
+      setSyntheticPromptActive(sessionID);
+      context.client.session
+        .prompt({
+          path: { id: sessionID },
+          body: {
+            model: { providerID: largeModel.providerID, modelID: largeModel.modelID },
+            parts: [buildSyntheticContinuationPart(RETURN_CONTINUATION)],
+          },
+        })
+        .catch(async (err) => {
+          await logger.warn("Large model continuation prompt failed", {
+            sessionID,
+            error: serializeError(err),
+          });
+        })
+        .finally(() => {
+          clearSyntheticPromptActive(sessionID);
+        });
+    }
+  }
 }

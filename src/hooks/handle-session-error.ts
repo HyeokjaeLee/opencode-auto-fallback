@@ -7,17 +7,22 @@ import {
   isUnsupportedContentError,
 } from "@/core/decision";
 import { handleImmediate, handleRetry } from "@/core/fallback";
-import { handleLargeContextSwitch } from "@/core/large-context";
+import { handleLargeContextReturn, handleLargeContextSwitch } from "@/core/large-context";
 import {
   clearActiveFallbackParams,
   clearCompactionTarget,
+  clearOpencodeCompacting,
   deleteLargeContextPhase,
   deleteRestoreModel,
+  getAndClearCompactionTarget,
   getCurrentModel,
   getLargeContextPhase,
+  getMaxSelfCompactionCycles,
   getSessionCooldownModel,
   getSessionOriginalAgent,
+  incrementSelfCompactionCount,
   isRegisteredAgent,
+  resetSelfCompactionCount,
   setCompactionTarget,
 } from "@/state/context-state";
 import { isCooldownActive } from "@/state/session-state";
@@ -79,6 +84,30 @@ export async function handleSessionError(
       const phase = getLargeContextPhase(sessionID);
 
       if (phase === "active") {
+        const target = getAndClearCompactionTarget(sessionID);
+
+        if (target === "default") {
+          await logger.info("Error: manual compact overflow during active phase, switching back", {
+            sessionID,
+          });
+          clearOpencodeCompacting(sessionID);
+          resetSelfCompactionCount(sessionID);
+          await handleLargeContextReturn(sessionID, config, context, logger);
+          return;
+        }
+
+        const selfCount = incrementSelfCompactionCount(sessionID);
+
+        if (selfCount > getMaxSelfCompactionCycles()) {
+          await logger.info("Error: max self-compaction cycles reached, switching back", {
+            sessionID,
+            selfCompactionCount: selfCount,
+          });
+          resetSelfCompactionCount(sessionID);
+          await handleLargeContextReturn(sessionID, config, context, logger);
+          return;
+        }
+
         setCompactionTarget(sessionID, "large");
         try {
           await context.client.session.summarize({
@@ -90,6 +119,7 @@ export async function handleSessionError(
           });
         } catch {
           clearCompactionTarget(sessionID);
+          clearOpencodeCompacting(sessionID);
         }
         return;
       }
@@ -119,10 +149,15 @@ export async function handleSessionError(
               }
             : {}),
         });
+        return;
       } catch {
-        /* fall through to normal error handling */
+        await logger.info(
+          "Error: manual compact failed for non-registered agent, falling through",
+          {
+            sessionID,
+          },
+        );
       }
-      return;
     }
   }
 

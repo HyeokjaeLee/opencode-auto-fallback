@@ -5,7 +5,11 @@ import { fallbackToModel, handleImmediate, handleRetry, tryFallbackChain } from 
 import { shouldSkipLargeContextFallback } from "@/core/large-context";
 import {
   cleanupSession,
+  getMaxSelfCompactionCycles,
+  getSelfCompactionCount,
+  incrementSelfCompactionCount,
   isRegisteredAgent,
+  resetSelfCompactionCount,
   setCurrentModel,
   setRegisteredAgents,
   setSessionOriginalAgent,
@@ -332,5 +336,38 @@ describe("shouldSkipLargeContextFallback", () => {
 
   it("respects custom minContextRatio", () => {
     expect(shouldSkipLargeContextFallback(100, 200, 2)).toBe(true);
+  });
+});
+
+describe("self-compaction counter", () => {
+  it("increments and retrieves count", () => {
+    expect(getSelfCompactionCount("session-1")).toBe(0);
+    expect(incrementSelfCompactionCount("session-1")).toBe(1);
+    expect(incrementSelfCompactionCount("session-1")).toBe(2);
+    expect(getSelfCompactionCount("session-1")).toBe(2);
+  });
+
+  it("resets count for session", () => {
+    incrementSelfCompactionCount("session-1");
+    incrementSelfCompactionCount("session-1");
+    resetSelfCompactionCount("session-1");
+    expect(getSelfCompactionCount("session-1")).toBe(0);
+  });
+
+  it("returns max self-compaction cycles", () => {
+    expect(getMaxSelfCompactionCycles()).toBe(2);
+  });
+
+  it("tracks count independently per session", () => {
+    incrementSelfCompactionCount("session-1");
+    incrementSelfCompactionCount("session-2");
+    expect(getSelfCompactionCount("session-1")).toBe(1);
+    expect(getSelfCompactionCount("session-2")).toBe(1);
+  });
+
+  it("is cleaned up by cleanupSession", () => {
+    incrementSelfCompactionCount("session-1");
+    cleanupSession("session-1");
+    expect(getSelfCompactionCount("session-1")).toBe(0);
   });
 });

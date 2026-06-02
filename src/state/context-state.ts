@@ -13,6 +13,11 @@ const registeredAgentSet = new Set<string>();
 
 const compactionTarget = new Map<string, "large" | "default">();
 const opencodeCompacting = new Set<string>();
+const selfCompactionCount = new Map<string, number>();
+const returnDeferred = new Set<string>();
+const syntheticPromptActive = new Set<string>();
+
+const MAX_SELF_COMPACTION_CYCLES = 2;
 
 export function setActiveFallbackParams(sessionID: string, model: FallbackModel): void {
   activeFallbackParams.set(sessionID, model);
@@ -128,6 +133,49 @@ export function setRestoreModel(sessionID: string, providerID: string, modelID: 
   sessionRestoreModel.set(sessionID, { providerID, modelID });
 }
 
+export function incrementSelfCompactionCount(sessionID: string): number {
+  const current = selfCompactionCount.get(sessionID) ?? 0;
+  const next = current + 1;
+  selfCompactionCount.set(sessionID, next);
+  return next;
+}
+
+export function getSelfCompactionCount(sessionID: string): number {
+  return selfCompactionCount.get(sessionID) ?? 0;
+}
+
+export function resetSelfCompactionCount(sessionID: string): void {
+  selfCompactionCount.delete(sessionID);
+}
+
+export function getMaxSelfCompactionCycles(): number {
+  return MAX_SELF_COMPACTION_CYCLES;
+}
+
+export function setReturnDeferred(sessionID: string): void {
+  returnDeferred.add(sessionID);
+}
+
+export function isReturnDeferred(sessionID: string): boolean {
+  return returnDeferred.has(sessionID);
+}
+
+export function clearReturnDeferred(sessionID: string): void {
+  returnDeferred.delete(sessionID);
+}
+
+export function setSyntheticPromptActive(sessionID: string): void {
+  syntheticPromptActive.add(sessionID);
+}
+
+export function isSyntheticPromptActive(sessionID: string): boolean {
+  return syntheticPromptActive.has(sessionID);
+}
+
+export function clearSyntheticPromptActive(sessionID: string): void {
+  syntheticPromptActive.delete(sessionID);
+}
+
 export function getRecoveryModel(sessionID: string): ResolvedModel | undefined {
   return sessionRestoreModel.get(sessionID) ?? largeContextSessions.get(sessionID);
 }
@@ -146,6 +194,9 @@ export function cleanupSession(sessionID: string): void {
   sessionRestoreModel.delete(sessionID);
   compactionTarget.delete(sessionID);
   opencodeCompacting.delete(sessionID);
+  selfCompactionCount.delete(sessionID);
+  returnDeferred.delete(sessionID);
+  syntheticPromptActive.delete(sessionID);
 }
 
 export function setRegisteredAgents(agents: string[]): void {
