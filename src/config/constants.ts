@@ -49,6 +49,11 @@ export const CONTEXT_OVERFLOW_PATTERNS: readonly string[] = [
   "request too large",
 ];
 
+export const PREFILL_NOT_SUPPORTED_PATTERNS: readonly string[] = [
+  "does not support assistant message prefill",
+  "must end with a user message",
+];
+
 /** Delay after aborting a session before sending a new prompt (ms) */
 export const ABORT_DELAY_MS = 300;
 

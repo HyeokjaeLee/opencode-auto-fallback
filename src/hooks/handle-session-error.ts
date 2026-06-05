@@ -4,9 +4,10 @@ import {
   classifyError,
   isContextOverflowError,
   isPermanentRateLimitMessage,
+  isPrefillNotSupportedError,
   isUnsupportedContentError,
 } from "@/core/decision";
-import { handleImmediate, handleRetry } from "@/core/fallback";
+import { handleImmediate, handlePrefillNotSupportedRetry, handleRetry } from "@/core/fallback";
 import { handleLargeContextReturn, handleLargeContextSwitch } from "@/core/large-context";
 import {
   clearActiveFallbackParams,
@@ -166,6 +167,14 @@ export async function handleSessionError(
       sessionID,
       message: err.data.message,
     });
+    return;
+  }
+
+  if (err.data.message && isPrefillNotSupportedError(err.data.message)) {
+    const result = await handlePrefillNotSupportedRetry(sessionID, logger, context);
+    if (result === "retried") return;
+    await logger.info("Prefill retry exhausted, routing to immediate fallback", { sessionID });
+    await handleImmediate(sessionID, config, logger, context);
     return;
   }
 

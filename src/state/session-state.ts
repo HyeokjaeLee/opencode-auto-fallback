@@ -5,7 +5,7 @@ const sessions = new Map<string, SessionState>();
 function ensureState(sessionID: string): SessionState {
   let state = sessions.get(sessionID);
   if (!state) {
-    state = { fallbackActive: false, cooldownEndTime: 0, backoffLevel: 0 };
+    state = { fallbackActive: false, cooldownEndTime: 0, backoffLevel: 0, prefillRetryCount: 0 };
     sessions.set(sessionID, state);
   }
   return state;
@@ -54,4 +54,22 @@ export function resetIfExpired(sessionID: string): boolean {
 
 export function removeSession(sessionID: string): void {
   sessions.delete(sessionID);
+}
+
+export function getPrefillRetryCount(sessionID: string): number {
+  const state = sessions.get(sessionID);
+  return state?.prefillRetryCount ?? 0;
+}
+
+export function incrementPrefillRetryCount(sessionID: string): number {
+  const state = ensureState(sessionID);
+  state.prefillRetryCount++;
+  return state.prefillRetryCount;
+}
+
+export function resetPrefillRetryCount(sessionID: string): void {
+  const state = sessions.get(sessionID);
+  if (state) {
+    state.prefillRetryCount = 0;
+  }
 }

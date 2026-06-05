@@ -2,6 +2,7 @@ import {
   CONTEXT_OVERFLOW_PATTERNS,
   IMMEDIATE_STATUS_CODES,
   PERMANENT_RATE_LIMIT_PATTERNS,
+  PREFILL_NOT_SUPPORTED_PATTERNS,
   RETRYABLE_STATUS_CODES,
   TRANSIENT_ERROR_PATTERNS,
   UNSUPPORTED_CONTENT_PATTERNS,
@@ -52,4 +53,9 @@ export function isContextOverflowError(message: string): boolean {
 export function isUnsupportedContentError(message: string): boolean {
   const lower = message.toLowerCase();
   return UNSUPPORTED_CONTENT_PATTERNS.some((pattern) => lower.includes(pattern));
+}
+
+export function isPrefillNotSupportedError(message: string): boolean {
+  const lower = message.toLowerCase();
+  return PREFILL_NOT_SUPPORTED_PATTERNS.some((pattern) => lower.includes(pattern));
 }

@@ -62,6 +62,7 @@ export interface SessionState {
   fallbackActive: boolean;
   cooldownEndTime: number;
   backoffLevel: number;
+  prefillRetryCount: number;
 }
 
 export interface MessageInfo {

@@ -10,16 +10,24 @@ import {
   setSessionCooldownModel,
 } from "@/state/context-state";
 import { isModelInCooldown, markModelCooldown } from "@/state/provider-state";
-import { activateCooldown, incrementBackoff, resetBackoff } from "@/state/session-state";
+import {
+  activateCooldown,
+  getPrefillRetryCount,
+  incrementBackoff,
+  incrementPrefillRetryCount,
+  resetBackoff,
+  resetPrefillRetryCount,
+} from "@/state/session-state";
 import { serializeError } from "@/utils/error";
 import {
   buildExhaustedNotificationPart,
   buildFallbackNotificationPart,
+  buildPrefillRetryNotificationPart,
   buildSyntheticContinuationPart,
 } from "@/utils/fallback-notification";
 import { formatModelKey } from "@/utils/model";
 import type { Logger } from "@/utils/session-utils";
-import { abortSession, showTuiNotification } from "@/utils/session-utils";
+import { abortSession, abortSessionSafely, showTuiNotification } from "@/utils/session-utils";
 
 import type { PluginInput } from "@opencode-ai/plugin";
 
@@ -62,6 +70,52 @@ export async function fallbackToModel(
       error: serializeError(err),
     });
     return false;
+  }
+}
+
+export async function handlePrefillNotSupportedRetry(
+  sessionID: string,
+  logger: Logger,
+  context: PluginInput,
+): Promise<"retried" | "fallthrough"> {
+  const retryCount = getPrefillRetryCount(sessionID);
+
+  if (retryCount > 0) {
+    await logger.info("Prefill retry already attempted, falling through to fallback chain", {
+      sessionID,
+    });
+    return "fallthrough";
+  }
+
+  incrementPrefillRetryCount(sessionID);
+  await logger.info("Prefill not supported, re-prompting same model with Continue", {
+    sessionID,
+  });
+
+  await abortSessionSafely(sessionID, context);
+
+  await showTuiNotification(
+    context,
+    sessionID,
+    [buildPrefillRetryNotificationPart("Prefill not supported", "Retrying same model")],
+    logger,
+  );
+
+  try {
+    await context.client.session.prompt({
+      path: { id: sessionID },
+      body: {
+        parts: [buildSyntheticContinuationPart(LARGE_CONTEXT_CONTINUATION)],
+      },
+    });
+    return "retried";
+  } catch (err) {
+    resetPrefillRetryCount(sessionID);
+    await logger.warn("Prefill same-model retry prompt failed, falling through", {
+      sessionID,
+      error: serializeError(err),
+    });
+    return "fallthrough";
   }
 }
 

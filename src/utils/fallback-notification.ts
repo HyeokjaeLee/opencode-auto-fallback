@@ -32,3 +32,13 @@ export function buildSyntheticContinuationPart(text: string): {
     synthetic: true,
   };
 }
+
+export function buildPrefillRetryNotificationPart(
+  errorName: string,
+  action: string,
+): { type: "text"; text: string } {
+  return {
+    type: "text" as const,
+    text: `[${errorName} / ${action}]\n${FALLBACK_MARKER}`,
+  };
+}
