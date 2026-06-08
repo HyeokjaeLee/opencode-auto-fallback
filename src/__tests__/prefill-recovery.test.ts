@@ -126,4 +126,67 @@ describe("handlePrefillNotSupportedRetry", () => {
     expect(result).toBe("fallthrough");
     expect(getPrefillRetryCount(SESSION)).toBe(0);
   });
+
+  it("reverts trailing assistant message before re-prompting", async () => {
+    const prompt = vi.fn().mockResolvedValue(undefined);
+    const abort = vi.fn().mockResolvedValue(undefined);
+    const messages = vi.fn().mockResolvedValue({
+      data: [{ info: { id: "msg-1", role: "assistant" }, parts: [] }],
+    });
+    const revert = vi.fn().mockResolvedValue(undefined);
+    const ctx = createMockContext({ prompt, abort, messages, revert });
+
+    const result = await handlePrefillNotSupportedRetry(SESSION, noopLogger, ctx);
+
+    expect(result).toBe("retried");
+    expect(revert).toHaveBeenCalledTimes(1);
+    expect(revert).toHaveBeenCalledWith({
+      path: { id: SESSION },
+      body: { messageID: "msg-1" },
+    });
+  });
+
+  it("does not call revert when last message is user", async () => {
+    const prompt = vi.fn().mockResolvedValue(undefined);
+    const abort = vi.fn().mockResolvedValue(undefined);
+    const messages = vi.fn().mockResolvedValue({
+      data: [{ info: { id: "msg-1", role: "user" }, parts: [] }],
+    });
+    const revert = vi.fn().mockResolvedValue(undefined);
+    const ctx = createMockContext({ prompt, abort, messages, revert });
+
+    const result = await handlePrefillNotSupportedRetry(SESSION, noopLogger, ctx);
+
+    expect(result).toBe("retried");
+    expect(revert).not.toHaveBeenCalled();
+  });
+
+  it("does not call revert when messages list is empty", async () => {
+    const prompt = vi.fn().mockResolvedValue(undefined);
+    const abort = vi.fn().mockResolvedValue(undefined);
+    const messages = vi.fn().mockResolvedValue({ data: [] });
+    const revert = vi.fn().mockResolvedValue(undefined);
+    const ctx = createMockContext({ prompt, abort, messages, revert });
+
+    const result = await handlePrefillNotSupportedRetry(SESSION, noopLogger, ctx);
+
+    expect(result).toBe("retried");
+    expect(revert).not.toHaveBeenCalled();
+  });
+
+  it("continues with prompt when revert fails", async () => {
+    const prompt = vi.fn().mockResolvedValue(undefined);
+    const abort = vi.fn().mockResolvedValue(undefined);
+    const messages = vi.fn().mockResolvedValue({
+      data: [{ info: { id: "msg-1", role: "assistant" }, parts: [] }],
+    });
+    const revert = vi.fn().mockRejectedValue(new Error("revert failed"));
+    const ctx = createMockContext({ prompt, abort, messages, revert });
+
+    const result = await handlePrefillNotSupportedRetry(SESSION, noopLogger, ctx);
+
+    expect(result).toBe("retried");
+    const agentCall = prompt.mock.calls.find((c) => c[0]?.body?.noReply !== true);
+    expect(agentCall).toBeDefined();
+  });
 });

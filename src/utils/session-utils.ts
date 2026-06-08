@@ -74,6 +74,44 @@ export async function abortSessionSafely(sessionID: string, context: PluginInput
   }
 }
 
+export async function revertLastAssistantMessage(
+  sessionID: string,
+  context: PluginInput,
+  logger: Logger,
+): Promise<boolean> {
+  try {
+    const response = await context.client.session.messages({
+      path: { id: sessionID },
+    });
+    const messages = (response.data ?? []) as Array<{
+      info: { id: string; role: string };
+      parts: unknown[];
+    }>;
+    if (messages.length === 0) {
+      return false;
+    }
+    const last = messages[messages.length - 1];
+    if (last.info.role !== "assistant") {
+      return false;
+    }
+    await context.client.session.revert({
+      path: { id: sessionID },
+      body: { messageID: last.info.id },
+    });
+    await logger.info("Reverted dangling assistant message before prefill retry", {
+      sessionID,
+      messageID: last.info.id,
+    });
+    return true;
+  } catch (err) {
+    await logger.warn("Failed to revert assistant message, continuing with retry", {
+      sessionID,
+      error: serializeError(err),
+    });
+    return false;
+  }
+}
+
 export async function fetchSessionData(
   sessionID: string,
   context: PluginInput,

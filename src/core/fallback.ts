@@ -27,7 +27,12 @@ import {
 } from "@/utils/fallback-notification";
 import { formatModelKey } from "@/utils/model";
 import type { Logger } from "@/utils/session-utils";
-import { abortSession, abortSessionSafely, showTuiNotification } from "@/utils/session-utils";
+import {
+  abortSession,
+  abortSessionSafely,
+  revertLastAssistantMessage,
+  showTuiNotification,
+} from "@/utils/session-utils";
 
 import type { PluginInput } from "@opencode-ai/plugin";
 
@@ -93,6 +98,8 @@ export async function handlePrefillNotSupportedRetry(
   });
 
   await abortSessionSafely(sessionID, context);
+
+  await revertLastAssistantMessage(sessionID, context, logger);
 
   await showTuiNotification(
     context,
