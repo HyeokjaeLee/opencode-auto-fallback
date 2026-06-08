@@ -8,6 +8,7 @@ import {
 import {
   clearCompactionTarget,
   clearOpencodeCompacting,
+  clearSelfCompactionInFlight,
   deleteLargeContextPhase,
   getCurrentModel,
   getLargeContextPhase,
@@ -19,8 +20,10 @@ import {
   isOpencodeCompacting,
   isRegisteredAgent,
   isReturnDeferred,
+  isSelfCompactionInFlight,
   resetSelfCompactionCount,
   setCompactionTarget,
+  setSelfCompactionInFlight,
   setSessionOriginalAgent,
 } from "@/state/context-state";
 import { isModelInCooldown } from "@/state/provider-state";
@@ -157,6 +160,13 @@ export async function handleSessionIdle(
       return;
     }
 
+    if (isSelfCompactionInFlight(props.sessionID)) {
+      await logger.info("Idle: self-compaction already in flight, skipping", {
+        sessionID: props.sessionID,
+      });
+      return;
+    }
+
     const activeParsedModel = agent ? getAgentLargeContextModel(config, agent) : null;
     if (!activeParsedModel) {
       await logger.info("Idle: active — no large context model, clearing phase", {
@@ -166,43 +176,51 @@ export async function handleSessionIdle(
       return;
     }
 
-    const largeThreshold = await checkContextThreshold(props.sessionID, context, logger);
-    if (largeThreshold.atThreshold) {
-      const selfCount = incrementSelfCompactionCount(props.sessionID);
+    setSelfCompactionInFlight(props.sessionID);
+    try {
+      const largeThreshold = await checkContextThreshold(props.sessionID, context, logger);
+      if (largeThreshold.atThreshold) {
+        const selfCount = incrementSelfCompactionCount(props.sessionID);
 
-      if (selfCount > getMaxSelfCompactionCycles()) {
-        await logger.info("Idle: max self-compaction cycles reached, switching back to original", {
+        if (selfCount > getMaxSelfCompactionCycles()) {
+          await logger.info(
+            "Idle: max self-compaction cycles reached, switching back to original",
+            {
+              sessionID: props.sessionID,
+              selfCompactionCount: selfCount,
+            },
+          );
+          resetSelfCompactionCount(props.sessionID);
+          await handleLargeContextReturn(props.sessionID, config, context, logger);
+          return;
+        }
+
+        await logger.info("Idle: large model context full, self-compacting", {
           sessionID: props.sessionID,
           selfCompactionCount: selfCount,
         });
-        resetSelfCompactionCount(props.sessionID);
-        await handleLargeContextReturn(props.sessionID, config, context, logger);
+        setCompactionTarget(props.sessionID, "large");
+        try {
+          await abortSessionSafely(props.sessionID, context);
+
+          await context.client.session.summarize({
+            path: { id: props.sessionID },
+            body: {
+              providerID: activeParsedModel.providerID,
+              modelID: activeParsedModel.modelID,
+            },
+          });
+        } catch {
+          clearCompactionTarget(props.sessionID);
+          clearOpencodeCompacting(props.sessionID);
+          await logger.info("Idle: self-compaction failed, cleared compactionTarget", {
+            sessionID: props.sessionID,
+          });
+        }
         return;
       }
-
-      await logger.info("Idle: large model context full, self-compacting", {
-        sessionID: props.sessionID,
-        selfCompactionCount: selfCount,
-      });
-      setCompactionTarget(props.sessionID, "large");
-      try {
-        await abortSessionSafely(props.sessionID, context);
-
-        await context.client.session.summarize({
-          path: { id: props.sessionID },
-          body: {
-            providerID: activeParsedModel.providerID,
-            modelID: activeParsedModel.modelID,
-          },
-        });
-      } catch {
-        clearCompactionTarget(props.sessionID);
-        clearOpencodeCompacting(props.sessionID);
-        await logger.info("Idle: self-compaction failed, cleared compactionTarget", {
-          sessionID: props.sessionID,
-        });
-      }
-      return;
+    } finally {
+      clearSelfCompactionInFlight(props.sessionID);
     }
 
     let autoContinuePending = false;

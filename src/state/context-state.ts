@@ -16,6 +16,7 @@ const opencodeCompacting = new Set<string>();
 const selfCompactionCount = new Map<string, number>();
 const returnDeferred = new Set<string>();
 const syntheticPromptActive = new Set<string>();
+const selfCompactionInFlight = new Set<string>();
 
 const MAX_SELF_COMPACTION_CYCLES = 2;
 
@@ -176,6 +177,18 @@ export function clearSyntheticPromptActive(sessionID: string): void {
   syntheticPromptActive.delete(sessionID);
 }
 
+export function setSelfCompactionInFlight(sessionID: string): void {
+  selfCompactionInFlight.add(sessionID);
+}
+
+export function isSelfCompactionInFlight(sessionID: string): boolean {
+  return selfCompactionInFlight.has(sessionID);
+}
+
+export function clearSelfCompactionInFlight(sessionID: string): void {
+  selfCompactionInFlight.delete(sessionID);
+}
+
 export function getRecoveryModel(sessionID: string): ResolvedModel | undefined {
   return sessionRestoreModel.get(sessionID) ?? largeContextSessions.get(sessionID);
 }
@@ -197,6 +210,7 @@ export function cleanupSession(sessionID: string): void {
   selfCompactionCount.delete(sessionID);
   returnDeferred.delete(sessionID);
   syntheticPromptActive.delete(sessionID);
+  selfCompactionInFlight.delete(sessionID);
 }
 
 export function setRegisteredAgents(agents: string[]): void {

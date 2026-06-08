@@ -3,8 +3,10 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { FallbackConfig } from "@/config/types";
 import { handleLargeContextCompletion } from "@/core/large-context";
 import { handleSessionError } from "@/hooks/handle-session-error";
+import { handleSessionIdle } from "@/hooks/handle-session-idle";
 import {
   cleanupSession,
+  clearSelfCompactionInFlight,
   getLargeContextPhase,
   getOrSetOriginalModel,
   getRecoveryModel,
@@ -12,6 +14,7 @@ import {
   incrementSelfCompactionCount,
   isOpencodeCompacting,
   isReturnDeferred,
+  isSelfCompactionInFlight,
   setCurrentModel,
   setCompactionTarget,
   setLargeContextPhase,
@@ -19,6 +22,7 @@ import {
   setOpencodeCompacting,
   setRegisteredAgents,
   setRestoreModel,
+  setSelfCompactionInFlight,
   setSessionOriginalAgent,
 } from "@/state/context-state";
 import { checkContextThreshold } from "@/utils/context";
@@ -559,5 +563,94 @@ describe("error handler compaction target routing", () => {
     });
 
     expect(isOpencodeCompacting(SID)).toBe(false);
+  });
+});
+
+describe("self-compaction in-flight guard helpers", () => {
+  const SID = "test-self-compaction-helpers";
+
+  afterEach(() => {
+    cleanupSession(SID);
+  });
+
+  it("setSelfCompactionInFlight makes isSelfCompactionInFlight true", () => {
+    expect(isSelfCompactionInFlight(SID)).toBe(false);
+    setSelfCompactionInFlight(SID);
+    expect(isSelfCompactionInFlight(SID)).toBe(true);
+  });
+
+  it("clearSelfCompactionInFlight makes isSelfCompactionInFlight false", () => {
+    setSelfCompactionInFlight(SID);
+    expect(isSelfCompactionInFlight(SID)).toBe(true);
+    clearSelfCompactionInFlight(SID);
+    expect(isSelfCompactionInFlight(SID)).toBe(false);
+  });
+
+  it("cleanupSession clears the in-flight guard", () => {
+    setSelfCompactionInFlight(SID);
+    expect(isSelfCompactionInFlight(SID)).toBe(true);
+    cleanupSession(SID);
+    expect(isSelfCompactionInFlight(SID)).toBe(false);
+  });
+});
+
+describe("session idle self-compaction re-entry guard", () => {
+  const SID = "test-idle-self-compaction-guard";
+
+  afterEach(() => {
+    cleanupSession(SID);
+  });
+
+  function setupAtThreshold(): FallbackConfig {
+    setRegisteredAgents(["test-agent"]);
+    setSessionOriginalAgent(SID, "test-agent");
+    setLargeContextPhase(SID, "active");
+    setCurrentModel(SID, "google", "gemini-2.5-pro");
+    setModelContextLimit("google/gemini-2.5-pro", 200000);
+    return makeConfig({
+      agents: { "test-agent": { largeContextModel: "google/gemini-2.5-pro" } },
+    });
+  }
+
+  it("skips summarize when self-compaction already in flight", async () => {
+    const config = setupAtThreshold();
+    setSelfCompactionInFlight(SID);
+
+    const mockSummarize = vi.fn().mockResolvedValue({ data: null });
+    const ctx = createMockContext({
+      summarize: mockSummarize,
+      messages: vi.fn().mockResolvedValue({
+        data: [makeAssistantMessage({ input: 199600, output: 50, reasoning: 50 })],
+      }),
+    });
+
+    await handleSessionIdle(config, noopLogger, ctx, {
+      type: "session.idle",
+      properties: { sessionID: SID },
+    });
+
+    expect(mockSummarize).not.toHaveBeenCalled();
+    expect(isSelfCompactionInFlight(SID)).toBe(true);
+  });
+
+  it("self-compacts once and clears the in-flight guard when not already in flight", async () => {
+    const config = setupAtThreshold();
+    expect(isSelfCompactionInFlight(SID)).toBe(false);
+
+    const mockSummarize = vi.fn().mockResolvedValue({ data: null });
+    const ctx = createMockContext({
+      summarize: mockSummarize,
+      messages: vi.fn().mockResolvedValue({
+        data: [makeAssistantMessage({ input: 199600, output: 50, reasoning: 50 })],
+      }),
+    });
+
+    await handleSessionIdle(config, noopLogger, ctx, {
+      type: "session.idle",
+      properties: { sessionID: SID },
+    });
+
+    expect(mockSummarize).toHaveBeenCalledTimes(1);
+    expect(isSelfCompactionInFlight(SID)).toBe(false);
   });
 });
