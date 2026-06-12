@@ -26,6 +26,7 @@ import {
   setSyntheticPromptActive,
 } from "@/state/context-state";
 import { isModelInCooldown } from "@/state/provider-state";
+import { calculateTokenCounts } from "@/utils/context";
 import { serializeError } from "@/utils/error";
 import {
   buildFallbackNotificationPart,
@@ -65,47 +66,29 @@ async function checkContextThresholdForModel(
           cache?: { read?: number; write?: number };
         };
       };
+      parts?: Array<{ type: string; text?: unknown; state?: { output?: unknown } }>;
     }>;
 
-    let totalTokens = 0;
-    let lastInput = 0;
-    let lastOutput = 0;
-    let lastReasoning = 0;
-    let lastCacheRead = 0;
-    let lastCacheWrite = 0;
+    const counts = calculateTokenCounts(raw);
 
-    for (const m of raw) {
-      if (m.info.role === "assistant" && m.info.tokens) {
-        const t = m.info.tokens;
-        const tokenSum =
-          t.input +
-          (t.output ?? 0) +
-          (t.reasoning ?? 0) +
-          (t.cache?.read ?? 0) +
-          (t.cache?.write ?? 0);
-        if (tokenSum > 0) {
-          lastInput = t.input;
-          lastOutput = t.output ?? 0;
-          lastReasoning = t.reasoning ?? 0;
-          lastCacheRead = t.cache?.read ?? 0;
-          lastCacheWrite = t.cache?.write ?? 0;
-          totalTokens = tokenSum;
-        }
-      }
-    }
-
-    if (totalTokens === 0) {
+    if (counts.assistantTokens === 0) {
       return { atThreshold: false, usage: 0, limit: 0 };
     }
 
     const modelKey = formatModelKey(model);
     const ctxLimit = getModelContextLimit(modelKey);
     if (!ctxLimit || ctxLimit === 0) {
-      return { atThreshold: true, usage: totalTokens, limit: 0 };
+      return { atThreshold: true, usage: counts.assistantTokens, limit: 0 };
     }
 
     const inputLimit = getModelInputLimit(modelKey);
-    const count = lastInput + lastOutput + lastReasoning + lastCacheRead + lastCacheWrite;
+    const count =
+      counts.lastInput +
+      counts.lastOutput +
+      counts.lastReasoning +
+      counts.lastCacheRead +
+      counts.lastCacheWrite +
+      counts.estimatedAdditionalTokens;
     const usable = inputLimit ?? ctxLimit;
 
     const atThreshold = count >= usable * CONTEXT_THRESHOLD_RATIO;
@@ -117,6 +100,7 @@ async function checkContextThresholdForModel(
       usable,
       usage: count,
       limit: ctxLimit,
+      estimatedAdditionalTokens: counts.estimatedAdditionalTokens,
       atThreshold,
     });
 

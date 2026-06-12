@@ -25,7 +25,7 @@ import {
   setSelfCompactionInFlight,
   setSessionOriginalAgent,
 } from "@/state/context-state";
-import { checkContextThreshold } from "@/utils/context";
+import { checkContextThreshold, estimateTokensFromParts } from "@/utils/context";
 
 import { createMockContext } from "./mocks";
 
@@ -652,5 +652,190 @@ describe("session idle self-compaction re-entry guard", () => {
 
     expect(mockSummarize).toHaveBeenCalledTimes(1);
     expect(isSelfCompactionInFlight(SID)).toBe(false);
+  });
+});
+
+describe("estimateTokensFromParts", () => {
+  it("returns 0 for empty parts array", () => {
+    expect(estimateTokensFromParts([])).toBe(0);
+  });
+
+  it("estimates tokens from text part", () => {
+    // 40 chars / 4 = 10 tokens
+    expect(estimateTokensFromParts([{ type: "text", text: "a".repeat(40) }])).toBe(10);
+  });
+
+  it("estimates tokens from tool part output", () => {
+    // 80 chars / 4 = 20 tokens
+    expect(estimateTokensFromParts([{ type: "tool", state: { output: "b".repeat(80) } }])).toBe(20);
+  });
+
+  it("sums tokens from mixed parts", () => {
+    // 40 + 80 = 120 chars / 4 = 30 tokens
+    expect(
+      estimateTokensFromParts([
+        { type: "text", text: "a".repeat(40) },
+        { type: "tool", state: { output: "b".repeat(80) } },
+      ]),
+    ).toBe(30);
+  });
+
+  it("ignores parts with missing text/output", () => {
+    expect(estimateTokensFromParts([{ type: "text" }, { type: "tool", state: {} }])).toBe(0);
+  });
+
+  it("uses Math.ceil for rounding", () => {
+    // 5 chars / 4 = 1.25 → ceil → 2 tokens
+    expect(estimateTokensFromParts([{ type: "text", text: "abcde" }])).toBe(2);
+  });
+});
+
+describe("tool result token estimation in checkContextThreshold", () => {
+  // Use a different SID to avoid conflicts
+  const TOOL_SID = "test-tool-result-estimation";
+
+  afterEach(() => {
+    cleanupSession(TOOL_SID);
+  });
+
+  it("tool result pushes count over threshold", async () => {
+    setCurrentModel(TOOL_SID, "zai-coding-plan", "glm-5.1");
+    setModelContextLimit("zai-coding-plan/glm-5.1", 200000);
+
+    // Assistant: input=180000, output=50, reasoning=50 → count=180100
+    // Tool result: 50000 chars → 12500 estimated tokens
+    // Total: 180100 + 12500 = 192600 >= 190000 (95%) → atThreshold
+    const ctx = createMockContext({
+      messages: vi.fn().mockResolvedValue({
+        data: [
+          makeAssistantMessage({ input: 180000, output: 50, reasoning: 50 }),
+          {
+            info: { role: "user" },
+            parts: [{ type: "tool", state: { output: "x".repeat(50000) } }],
+          },
+        ],
+      }),
+    });
+
+    const result = await checkContextThreshold(TOOL_SID, ctx, noopLogger);
+    expect(result.atThreshold).toBe(true);
+  });
+
+  it("tool result keeps count under threshold", async () => {
+    setCurrentModel(TOOL_SID, "zai-coding-plan", "glm-5.1");
+    setModelContextLimit("zai-coding-plan/glm-5.1", 200000);
+
+    // Assistant: input=170000, output=50, reasoning=50 → count=170100
+    // Tool result: 10000 chars → 2500 estimated tokens
+    // Total: 170100 + 2500 = 172600 < 190000 → NOT atThreshold
+    const ctx = createMockContext({
+      messages: vi.fn().mockResolvedValue({
+        data: [
+          makeAssistantMessage({ input: 170000, output: 50, reasoning: 50 }),
+          {
+            info: { role: "user" },
+            parts: [{ type: "tool", state: { output: "x".repeat(10000) } }],
+          },
+        ],
+      }),
+    });
+
+    const result = await checkContextThreshold(TOOL_SID, ctx, noopLogger);
+    expect(result.atThreshold).toBe(false);
+  });
+
+  it("multiple tool results are all counted", async () => {
+    setCurrentModel(TOOL_SID, "zai-coding-plan", "glm-5.1");
+    setModelContextLimit("zai-coding-plan/glm-5.1", 200000);
+
+    // Assistant: count=180000
+    // Two tool results: 20000 chars each → 5000 + 5000 = 10000 estimated
+    // Total: 180000 + 10000 = 190000 >= 190000 → atThreshold
+    const ctx = createMockContext({
+      messages: vi.fn().mockResolvedValue({
+        data: [
+          makeAssistantMessage({ input: 180000, output: 0, reasoning: 0 }),
+          {
+            info: { role: "user" },
+            parts: [{ type: "tool", state: { output: "x".repeat(20000) } }],
+          },
+          {
+            info: { role: "user" },
+            parts: [{ type: "tool", state: { output: "y".repeat(20000) } }],
+          },
+        ],
+      }),
+    });
+
+    const result = await checkContextThreshold(TOOL_SID, ctx, noopLogger);
+    expect(result.atThreshold).toBe(true);
+  });
+
+  it("tool results before last assistant are NOT double-counted", async () => {
+    setCurrentModel(TOOL_SID, "zai-coding-plan", "glm-5.1");
+    setModelContextLimit("zai-coding-plan/glm-5.1", 200000);
+
+    // Tool result BEFORE last assistant → already in token data, not estimated
+    // Only messages AFTER last assistant should be estimated
+    const ctx = createMockContext({
+      messages: vi.fn().mockResolvedValue({
+        data: [
+          {
+            info: { role: "user" },
+            parts: [{ type: "tool", state: { output: "x".repeat(100000) } }],
+          },
+          makeAssistantMessage({ input: 180000, output: 100, reasoning: 0 }),
+          // No messages after last assistant → estimatedAdditionalTokens = 0
+        ],
+      }),
+    });
+
+    const result = await checkContextThreshold(TOOL_SID, ctx, noopLogger);
+    // count = 180100 + 0 = 180100 < 190000 → false
+    expect(result.atThreshold).toBe(false);
+  });
+
+  it("empty tool output adds 0 tokens", async () => {
+    setCurrentModel(TOOL_SID, "zai-coding-plan", "glm-5.1");
+    setModelContextLimit("zai-coding-plan/glm-5.1", 200000);
+
+    const ctx = createMockContext({
+      messages: vi.fn().mockResolvedValue({
+        data: [
+          makeAssistantMessage({ input: 180000, output: 100, reasoning: 0 }),
+          {
+            info: { role: "user" },
+            parts: [{ type: "tool", state: { output: "" } }],
+          },
+        ],
+      }),
+    });
+
+    const result = await checkContextThreshold(TOOL_SID, ctx, noopLogger);
+    // count = 180100 + 0 = 180100 < 190000 → false
+    expect(result.atThreshold).toBe(false);
+  });
+
+  it("text parts in post-assistant messages are estimated", async () => {
+    setCurrentModel(TOOL_SID, "zai-coding-plan", "glm-5.1");
+    setModelContextLimit("zai-coding-plan/glm-5.1", 200000);
+
+    // Assistant: count=180000
+    // Text part: 40000 chars → 10000 tokens
+    // Total: 180000 + 10000 = 190000 >= 190000 → atThreshold
+    const ctx = createMockContext({
+      messages: vi.fn().mockResolvedValue({
+        data: [
+          makeAssistantMessage({ input: 180000, output: 0, reasoning: 0 }),
+          {
+            info: { role: "user" },
+            parts: [{ type: "text", text: "z".repeat(40000) }],
+          },
+        ],
+      }),
+    });
+
+    const result = await checkContextThreshold(TOOL_SID, ctx, noopLogger);
+    expect(result.atThreshold).toBe(true);
   });
 });

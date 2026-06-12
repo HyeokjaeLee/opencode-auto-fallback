@@ -74,3 +74,6 @@ export const DEFAULT_MIN_CONTEXT_RATIO = 0.1;
 
 /** Fraction of context window at which idle handler triggers large context switching (0.95 = 95%) */
 export const CONTEXT_THRESHOLD_RATIO = 0.95;
+
+/** Estimated characters per token for rough context size estimation */
+export const ESTIMATED_CHARS_PER_TOKEN = 4;
