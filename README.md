@@ -13,6 +13,31 @@ OpenCode plugin that automatically detects model errors and switches to a fallba
 - **Large context fallback**: automatically switches to a larger context model in-place when context fills up, then switches back after compaction with structured context preservation
 - **Auto-update toggle**: optional automatic update checks on startup (disabled by default)
 
+## OpenCode V1 & V2 Support
+
+The plugin ships a single package that supports **both** OpenCode V1 and V2 through one default export:
+
+- **OpenCode V1** (`>= 1.18.29`) loads the `server` field and gets the full feature set below.
+- **OpenCode V2** (`>= 2.0.x`) loads the `id` / `setup` fields and gets the V2 subset described in [V2 Feature Parity](#v2-feature-parity).
+
+> Older V1 releases (before object entrypoints) should import the named `AutoFallbackPlugin` export instead.
+
+### V2 Feature Parity
+
+OpenCode V2 does not expose `session.summarize`, `session.revert`, or `session.messages` to plugins, and it has no direct equivalent for the V1 `experimental.session.compacting` hook. As a result, some features are **V1-only** on the V2 runtime:
+
+| Feature                                                 | V1  | V2                                     |
+| ------------------------------------------------------- | --- | -------------------------------------- |
+| Error classification + retry with backoff               | ✅  | ✅                                     |
+| Fallback chain on immediate errors (401/402/403, quota) | ✅  | ✅                                     |
+| Per-model timed cooldown                                | ✅  | ✅                                     |
+| Fallback model params (temperature, topP, maxTokens)    | ✅  | ✅                                     |
+| Large context model switching                           | ✅  | ❌ needs `summarize` + message history |
+| Prefill-not-supported recovery                          | ✅  | ❌ needs `revert`                      |
+| Compaction prompt injection                             | ✅  | ❌ no V2 compaction hook               |
+
+The V2 adapter maps the V1 hooks as follows: `chat.params` → `ctx.session.hook("context", …)`, `event` → `ctx.event.subscribe()`, and error handling → `ctx.session.hook("retry", …)` with `ctx.session.switchModel` + `ctx.session.prompt` for fallback. All configuration, cooldown, and logging behavior is shared between both runtimes.
+
 ## Installation
 
 ### 1. Register in opencode config
