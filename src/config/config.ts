@@ -234,7 +234,16 @@ export function getAgentMinContextRatio(config: FallbackConfig, agent: string | 
   return config.defaultMinContextRatio;
 }
 
+/** All agents named in the config, including fallback-only agents (normalized names). */
 export function getRegisteredAgentNames(config: FallbackConfig): string[] {
+  return Object.keys(config.agents).map((name) => normalizeAgentName(name));
+}
+
+/**
+ * Agents eligible for large-context switching: explicit largeContextModel,
+ * inherited defaultLargeContextModel, minus explicit `false` opt-outs.
+ */
+export function getLargeContextEligibleAgentNames(config: FallbackConfig): string[] {
   return Object.entries(config.agents)
     .filter(([_, ac]) => {
       if (ac.largeContextModel === false) return false;

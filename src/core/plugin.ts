@@ -1,10 +1,17 @@
-import { getAgentLargeContextModel, getRegisteredAgentNames, loadConfig } from "@/config/config";
+import {
+  getAgentLargeContextModel,
+  getAgentMinContextRatio,
+  getLargeContextEligibleAgentNames,
+  getRegisteredAgentNames,
+  loadConfig,
+} from "@/config/config";
 import {
   COMPACTION_FALLBACK_TOKEN_LIMIT,
   TOAST_DURATION_LONG_MS,
   TOAST_DURATION_MS,
 } from "@/config/constants";
 import type { FallbackConfig } from "@/config/types";
+import { handleLargeContextSwitch, shouldSkipLargeContextFallback } from "@/core/large-context";
 import { createEventHandler } from "@/hooks/events";
 import {
   deleteSessionCooldownModel,
@@ -23,12 +30,14 @@ import {
   setModelInputLimit,
   setOpencodeCompacting,
   setRegisteredAgents,
+  setLargeContextEligibleAgents,
   setSessionOriginalAgent,
   setCompactionTarget,
   setRestoreModel,
   clearReturnDeferred,
   isSyntheticPromptActive,
 } from "@/state/context-state";
+import { isModelInCooldown } from "@/state/provider-state";
 import { deactivateCooldown } from "@/state/session-state";
 import { checkContextThreshold } from "@/utils/context";
 import { serializeError } from "@/utils/error";
@@ -36,6 +45,7 @@ import { createLogger } from "@/utils/log";
 import { formatModelKey, isSameModel } from "@/utils/model";
 import type { Logger } from "@/utils/session-utils";
 import { abortSessionSafely, showToastSafely } from "@/utils/session-utils";
+import { isSubagentSession, prepareSessionForPrompt } from "@/utils/subagent";
 import { checkForUpdates, tryInstallUpdate } from "@/utils/update-checker";
 import { version as currentVersion } from "~/package.json";
 
@@ -166,10 +176,15 @@ export async function createPlugin(context: PluginInput): Promise<PluginHooks> {
 
   return {
     config: async (input) => {
+      // Always sync the registry — even to [] — so stale state cannot survive a config change.
       const registeredNames = getRegisteredAgentNames(config);
-      if (registeredNames.length === 0) return;
-
       setRegisteredAgents(registeredNames);
+
+      // Native auto-compaction is only sacrificed when a large-context agent needs
+      // the plugin-managed switch; fallback-only setups keep opencode's own compaction.
+      const eligibleNames = getLargeContextEligibleAgentNames(config);
+      setLargeContextEligibleAgents(eligibleNames);
+      if (eligibleNames.length === 0) return;
 
       const existingCompaction = (input as Record<string, unknown>).compaction as
         | { reserved?: number; auto?: boolean }
@@ -180,7 +195,7 @@ export async function createPlugin(context: PluginInput): Promise<PluginHooks> {
       await logger.info(
         "Config: auto-compaction globally disabled (SDK limitation: no per-agent setting)",
         {
-          registeredAgents: registeredNames,
+          eligibleAgents: eligibleNames,
         },
       );
     },
@@ -201,11 +216,9 @@ function createChatParamsHandler(
   context: PluginInput,
 ): (input: ChatParamsInput, output: ChatParamsOutput) => Promise<void> {
   return async (input: ChatParamsInput, output: ChatParamsOutput): Promise<void> => {
-    if (
-      input.agent &&
-      isRegisteredAgent(input.agent) &&
-      !getSessionOriginalAgent(input.sessionID)
-    ) {
+    // Record the agent for ANY session so fallback re-sends keep the original agent,
+    // even in default-only configs where no agent is registered (issue #3).
+    if (input.agent && !getSessionOriginalAgent(input.sessionID)) {
       setSessionOriginalAgent(input.sessionID, input.agent);
     }
 
@@ -259,7 +272,7 @@ function createChatParamsHandler(
                 lcfParsed,
               )
             ) {
-              await logger.info("Model changed from large model, aborting generation", {
+              await logger.info("Model changed from large model, restarting generation", {
                 sessionID: input.sessionID,
                 fromModel: formatModelKey(prev),
                 toModel: formatModelKey({
@@ -269,7 +282,13 @@ function createChatParamsHandler(
                 phase,
               });
               setRestoreModel(input.sessionID, input.model.providerID, input.model.id);
-              await abortSessionSafely(input.sessionID, context);
+              // Child/unknown-ownership sessions are never aborted here (issue #4).
+              const recovery = await prepareSessionForPrompt(input.sessionID, context, logger);
+              if (recovery === "not-ready") {
+                await logger.warn("Model changed from large model, but session not ready", {
+                  sessionID: input.sessionID,
+                });
+              }
               return;
             }
           }
@@ -313,19 +332,72 @@ function createChatParamsHandler(
         }
       }
     }
-
     if (!getLargeContextPhase(input.sessionID)) {
       if (input.agent) {
         const threshold = await checkContextThreshold(input.sessionID, context, logger);
         if (threshold.atThreshold) {
-          await logger.info("Pre-generation: context at threshold, aborting", {
-            sessionID: input.sessionID,
-            usage: threshold.usage,
-            limit: threshold.limit,
-            atThreshold: threshold.atThreshold,
-          });
-          await abortSessionSafely(input.sessionID, context);
-          return;
+          // Aborting a task-tool child session cancels its parent's task call
+          // (issue #4) — leave children and unknown-ownership sessions alone here.
+          const isChild = await isSubagentSession(input.sessionID, context, logger);
+          if (isChild === false) {
+            const agent = getSessionOriginalAgent(input.sessionID) ?? input.agent;
+            const lcfParsed = getAgentLargeContextModel(config, agent);
+            const curModel = getCurrentModel(input.sessionID);
+            const largeLimit = lcfParsed
+              ? getModelContextLimit(formatModelKey(lcfParsed))
+              : undefined;
+            const minRatio = getAgentMinContextRatio(config, agent);
+            // An unknown large-model limit does not fail the ratio gate (idle-handler convention).
+            const canSwitch = Boolean(
+              lcfParsed &&
+              agent &&
+              isRegisteredAgent(agent) &&
+              curModel &&
+              !isSameModel(curModel, lcfParsed) &&
+              !isModelInCooldown(lcfParsed.providerID, lcfParsed.modelID) &&
+              (!largeLimit ||
+                !shouldSkipLargeContextFallback(threshold.limit, largeLimit, minRatio)),
+            );
+
+            if (canSwitch && lcfParsed) {
+              await logger.info("Pre-generation: context at threshold, switching to large model", {
+                sessionID: input.sessionID,
+                usage: threshold.usage,
+                limit: threshold.limit,
+                largeModel: formatModelKey(lcfParsed),
+              });
+              await abortSessionSafely(input.sessionID, context);
+              const switched = await handleLargeContextSwitch(
+                input.sessionID,
+                lcfParsed,
+                context,
+                logger,
+                `Context at ${((threshold.usage / threshold.limit) * 100).toFixed(1)}%`,
+              );
+              if (!switched) {
+                await logger.warn(
+                  "Pre-generation: large context switch failed, session aborted at threshold",
+                  { sessionID: input.sessionID },
+                );
+              }
+              return;
+            }
+
+            await logger.info("Pre-generation: context at threshold, aborting", {
+              sessionID: input.sessionID,
+              usage: threshold.usage,
+              limit: threshold.limit,
+              atThreshold: threshold.atThreshold,
+            });
+            await abortSessionSafely(input.sessionID, context);
+            return;
+          }
+          await logger.info(
+            "Pre-generation: context at threshold, deferring to idle/error recovery (subagent session)",
+            {
+              sessionID: input.sessionID,
+            },
+          );
         }
       }
     }

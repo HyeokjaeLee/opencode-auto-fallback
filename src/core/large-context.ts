@@ -27,6 +27,7 @@ import {
 } from "@/state/context-state";
 import { isModelInCooldown } from "@/state/provider-state";
 import { calculateTokenCounts } from "@/utils/context";
+import { monitorContinuationActivity } from "@/utils/continuation-monitor";
 import { serializeError } from "@/utils/error";
 import {
   buildFallbackNotificationPart,
@@ -34,7 +35,8 @@ import {
 } from "@/utils/fallback-notification";
 import { formatModelKey } from "@/utils/model";
 import type { Logger } from "@/utils/session-utils";
-import { abortSessionSafely, fetchSessionData, showTuiNotification } from "@/utils/session-utils";
+import { fetchSessionData, showTuiNotification } from "@/utils/session-utils";
+import { prepareSessionForPrompt } from "@/utils/subagent";
 
 import type { PluginInput } from "@opencode-ai/plugin";
 
@@ -179,6 +181,8 @@ export async function handleLargeContextSwitch(
     );
 
     setSyntheticPromptActive(sessionID);
+    // Baseline must be taken before the continuation prompt (issue #7).
+    const monitor = monitorContinuationActivity(sessionID, context, logger);
     context.client.session
       .prompt({
         path: { id: sessionID },
@@ -189,6 +193,7 @@ export async function handleLargeContextSwitch(
         },
       })
       .catch(async (err) => {
+        monitor.suppress();
         await logger.warn("Large model continuation prompt failed (phase already active)", {
           sessionID,
           error: serializeError(err),
@@ -241,7 +246,15 @@ export async function handleLargeContextReturn(
   setLargeContextPhase(sessionID, "summarizing");
 
   try {
-    await abortSessionSafely(sessionID, context);
+    // Child/unknown-ownership sessions are never aborted here (issue #4).
+    const recovery = await prepareSessionForPrompt(sessionID, context, logger);
+    if (recovery === "not-ready") {
+      await logger.error("Return: session not ready for switch-back compaction, clearing phase", {
+        sessionID,
+      });
+      deleteLargeContextPhase(sessionID);
+      return;
+    }
 
     await context.client.session.summarize({
       path: { id: sessionID },
@@ -358,6 +371,8 @@ export async function handleLargeContextCompletion(
     const largeModel = agent ? getAgentLargeContextModel(config, agent) : null;
     if (largeModel) {
       setSyntheticPromptActive(sessionID);
+      // Baseline must be taken before the continuation prompt (issue #7).
+      const monitor = monitorContinuationActivity(sessionID, context, logger);
       context.client.session
         .prompt({
           path: { id: sessionID },
@@ -367,6 +382,7 @@ export async function handleLargeContextCompletion(
           },
         })
         .catch(async (err) => {
+          monitor.suppress();
           await logger.warn("Large model continuation prompt failed", {
             sessionID,
             error: serializeError(err),

@@ -1,6 +1,12 @@
 import { afterEach, describe, expect, it } from "vitest";
 
-import { getFallbackChain, normalizeAgentName, parseModel } from "@/config/config";
+import {
+  getFallbackChain,
+  getLargeContextEligibleAgentNames,
+  getRegisteredAgentNames,
+  normalizeAgentName,
+  parseModel,
+} from "@/config/config";
 import { DEFAULT_MIN_CONTEXT_RATIO } from "@/config/constants";
 import type { FallbackConfig } from "@/config/types";
 import { isPermanentRateLimitMessage, isTransientErrorMessage } from "@/core/decision";
@@ -126,6 +132,47 @@ describe("getFallbackChain", () => {
 describe("normalizeAgentName", () => {
   it("removes whitespace and zero-width characters before lowercasing", () => {
     expect(normalizeAgentName("​Sisyphus - Ultraworker")).toBe("sisyphus-ultraworker");
+  });
+});
+
+describe("agent registration", () => {
+  const config: FallbackConfig = {
+    enabled: true,
+    autoUpdate: false,
+    defaultFallback: ["anthropic/claude-opus-4-5"],
+    defaultLargeContextModel: false,
+    defaultMinContextRatio: DEFAULT_MIN_CONTEXT_RATIO,
+    agents: {
+      "fallback-only": { fallback: ["zai/glm-5.1"] },
+      large: { fallback: ["zai/glm-5.1"], largeContextModel: "zai/glm-5.3" },
+      opted: { fallback: ["zai/glm-5.1"], largeContextModel: false },
+    },
+    cooldownMs: 60000,
+    maxRetries: 2,
+    logging: false,
+  };
+
+  it("registers every configured agent, including fallback-only and opt-outs", () => {
+    expect(getRegisteredAgentNames(config).sort()).toEqual(["fallback-only", "large", "opted"]);
+  });
+
+  it("marks only agents with an effective large model as large-context eligible", () => {
+    expect(getLargeContextEligibleAgentNames(config)).toEqual(["large"]);
+  });
+
+  it("inherits defaultLargeContextModel for agents without explicit setting", () => {
+    const inherited: FallbackConfig = {
+      ...config,
+      defaultLargeContextModel: "zai/glm-5.3",
+      agents: { plain: { fallback: ["zai/glm-5.1"] } },
+    };
+    expect(getLargeContextEligibleAgentNames(inherited)).toEqual(["plain"]);
+  });
+
+  it("returns empty lists for configs without agents", () => {
+    const empty: FallbackConfig = { ...config, agents: {} };
+    expect(getRegisteredAgentNames(empty)).toEqual([]);
+    expect(getLargeContextEligibleAgentNames(empty)).toEqual([]);
   });
 });
 

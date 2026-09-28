@@ -1,17 +1,25 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { SUBAGENT_IDLE_POLL_INTERVAL_MS, SUBAGENT_IDLE_TIMEOUT_MS } from "@/config/constants";
 import type { FallbackConfig } from "@/config/types";
 import { fallbackToModel, handleImmediate, handleRetry, tryFallbackChain } from "@/core/fallback";
 import { shouldSkipLargeContextFallback } from "@/core/large-context";
+import { handleSessionError } from "@/hooks/handle-session-error";
+import { handleSessionIdle } from "@/hooks/handle-session-idle";
 import {
   cleanupSession,
   getMaxSelfCompactionCycles,
+  getOrSetOriginalModel,
   getSelfCompactionCount,
   incrementSelfCompactionCount,
   isRegisteredAgent,
   resetSelfCompactionCount,
+  setCompactionTarget,
   setCurrentModel,
+  setLargeContextPhase,
+  setModelContextLimit,
   setRegisteredAgents,
+  setRestoreModel,
   setSessionOriginalAgent,
 } from "@/state/context-state";
 import { isModelInCooldown } from "@/state/provider-state";
@@ -171,6 +179,26 @@ describe("handleImmediate", () => {
     await handleImmediate(SESSION, config, noopLogger, ctx);
 
     expect(mockAbort).toHaveBeenCalled();
+    expect(mockPrompt).toHaveBeenCalledWith(
+      expect.objectContaining({
+        body: expect.objectContaining({
+          model: { providerID: "openai", modelID: "gpt-5.4" },
+        }),
+      }),
+    );
+  });
+
+  it("continues the fallback chain when the abort call rejects (issue #6)", async () => {
+    const mockAbort = vi.fn().mockRejectedValue(new Error("connection refused"));
+    const mockPrompt = vi.fn().mockResolvedValue(undefined);
+    const ctx = createMockContext({ abort: mockAbort, prompt: mockPrompt });
+    const config = makeConfig();
+
+    setCurrentModel(SESSION, "openai", "gpt-5.5");
+    setSessionOriginalAgent(SESSION, "oracle");
+
+    await handleImmediate(SESSION, config, noopLogger, ctx);
+
     expect(mockPrompt).toHaveBeenCalledWith(
       expect.objectContaining({
         body: expect.objectContaining({
@@ -369,5 +397,237 @@ describe("self-compaction counter", () => {
     incrementSelfCompactionCount("session-1");
     cleanupSession("session-1");
     expect(getSelfCompactionCount("session-1")).toBe(0);
+  });
+});
+
+describe("subagent session recovery (issue #4)", () => {
+  const CHILD = "child-session-1";
+
+  afterEach(() => {
+    cleanupSession(CHILD);
+    removeSession(CHILD);
+    setRegisteredAgents([]);
+  });
+
+  function childContext(overrides?: Parameters<typeof createMockContext>[0]) {
+    return createMockContext({
+      get: vi.fn().mockResolvedValue({ data: { id: CHILD, parentID: "parent-1" } }),
+      ...overrides,
+    });
+  }
+
+  it("handleImmediate never aborts a child session and re-prompts it", async () => {
+    const mockAbort = vi.fn().mockResolvedValue(undefined);
+    const mockPrompt = vi.fn().mockResolvedValue(undefined);
+    const ctx = childContext({ abort: mockAbort, prompt: mockPrompt });
+
+    setCurrentModel(CHILD, "openai", "gpt-5.5");
+    setSessionOriginalAgent(CHILD, "oracle");
+
+    await handleImmediate(CHILD, makeConfig(), noopLogger, ctx);
+
+    expect(mockAbort).not.toHaveBeenCalled();
+    expect(mockPrompt).toHaveBeenCalledWith(
+      expect.objectContaining({
+        body: expect.objectContaining({
+          agent: "oracle",
+          model: { providerID: "openai", modelID: "gpt-5.4" },
+        }),
+      }),
+    );
+  });
+
+  it("handleImmediate skips the prompt when a child never becomes idle", async () => {
+    vi.useFakeTimers();
+    try {
+      const mockAbort = vi.fn().mockResolvedValue(undefined);
+      const mockPrompt = vi.fn().mockResolvedValue(undefined);
+      const ctx = childContext({
+        abort: mockAbort,
+        prompt: mockPrompt,
+        status: vi.fn().mockResolvedValue({ data: { [CHILD]: { type: "busy" } } }),
+      });
+
+      setCurrentModel(CHILD, "openai", "gpt-5.5");
+      setSessionOriginalAgent(CHILD, "oracle");
+
+      const pending = handleImmediate(CHILD, makeConfig(), noopLogger, ctx);
+      await vi.advanceTimersByTimeAsync(SUBAGENT_IDLE_TIMEOUT_MS + SUBAGENT_IDLE_POLL_INTERVAL_MS);
+      await pending;
+
+      expect(mockAbort).not.toHaveBeenCalled();
+      expect(mockPrompt).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("handleRetry never aborts a child session and re-prompts it", async () => {
+    const mockAbort = vi.fn().mockResolvedValue(undefined);
+    const mockPrompt = vi.fn().mockResolvedValue(undefined);
+    const ctx = childContext({ abort: mockAbort, prompt: mockPrompt });
+
+    setCurrentModel(CHILD, "openai", "gpt-5.5");
+    setSessionOriginalAgent(CHILD, "oracle");
+
+    await handleRetry(CHILD, makeConfig(), noopLogger, ctx);
+
+    expect(mockAbort).not.toHaveBeenCalled();
+    expect(mockPrompt).toHaveBeenCalledWith(
+      expect.objectContaining({
+        body: expect.objectContaining({ agent: "oracle" }),
+      }),
+    );
+  });
+
+  it("context-overflow recovery never aborts a child session (issue #4)", async () => {
+    const mockAbort = vi.fn().mockResolvedValue(undefined);
+    const mockPrompt = vi.fn().mockResolvedValue(undefined);
+    const ctx = childContext({
+      abort: mockAbort,
+      prompt: mockPrompt,
+      messages: vi.fn().mockResolvedValue({
+        data: [
+          {
+            info: { id: "u1", role: "user", sessionID: CHILD, agent: "big" },
+            parts: [{ type: "text", text: "task" }],
+          },
+          {
+            info: {
+              role: "assistant",
+              tokens: { input: 100, output: 1, reasoning: 0, cache: { read: 0, write: 0 } },
+            },
+            parts: [],
+          },
+        ],
+      }),
+    });
+
+    setRegisteredAgents(["big"]);
+    setSessionOriginalAgent(CHILD, "big");
+    setCurrentModel(CHILD, "anthropic", "claude-sonnet-4");
+    getOrSetOriginalModel(CHILD, "anthropic", "claude-sonnet-4");
+
+    await handleSessionError(
+      makeConfig({ agents: { big: { largeContextModel: "google/gemini-2.5-pro" } } }),
+      noopLogger,
+      ctx,
+      {
+        type: "session.error",
+        properties: {
+          sessionID: CHILD,
+          error: { name: "Error", data: { message: "context length exceeded" } },
+        },
+      },
+    );
+
+    expect(mockAbort).not.toHaveBeenCalled();
+    expect(mockPrompt).toHaveBeenCalledWith(
+      expect.objectContaining({
+        body: expect.objectContaining({
+          model: { providerID: "google", modelID: "gemini-2.5-pro" },
+          agent: "big",
+        }),
+      }),
+    );
+  });
+
+  it("active-phase child overflow never aborts a child session (issue #4)", async () => {
+    const mockAbort = vi.fn().mockResolvedValue(undefined);
+    const mockSummarize = vi.fn().mockResolvedValue({ data: null });
+    const ctx = childContext({ abort: mockAbort, summarize: mockSummarize });
+
+    setRegisteredAgents(["big"]);
+    setSessionOriginalAgent(CHILD, "big");
+    setCurrentModel(CHILD, "anthropic", "claude-sonnet-4");
+    getOrSetOriginalModel(CHILD, "anthropic", "claude-sonnet-4");
+    setRestoreModel(CHILD, "anthropic", "claude-sonnet-4");
+    setLargeContextPhase(CHILD, "active");
+    setCompactionTarget(CHILD, "default");
+
+    await handleSessionError(
+      makeConfig({ agents: { big: { largeContextModel: "google/gemini-2.5-pro" } } }),
+      noopLogger,
+      ctx,
+      {
+        type: "session.error",
+        properties: {
+          sessionID: CHILD,
+          error: { name: "Error", data: { message: "context length exceeded" } },
+        },
+      },
+    );
+
+    expect(mockAbort).not.toHaveBeenCalled();
+    expect(mockSummarize).toHaveBeenCalledWith(
+      expect.objectContaining({
+        body: { providerID: "google", modelID: "gemini-2.5-pro" },
+      }),
+    );
+  });
+
+  it("idle self-compaction never aborts a child session (issue #4)", async () => {
+    const mockAbort = vi.fn().mockResolvedValue(undefined);
+    const mockSummarize = vi.fn().mockResolvedValue({ data: null });
+    const ctx = childContext({
+      abort: mockAbort,
+      summarize: mockSummarize,
+      messages: vi.fn().mockResolvedValue({
+        data: [
+          {
+            info: {
+              role: "assistant",
+              tokens: { input: 199600, output: 50, reasoning: 50, cache: { read: 0, write: 0 } },
+            },
+            parts: [],
+          },
+        ],
+      }),
+    });
+
+    setRegisteredAgents(["big"]);
+    setSessionOriginalAgent(CHILD, "big");
+    setLargeContextPhase(CHILD, "active");
+    setCurrentModel(CHILD, "google", "gemini-2.5-pro");
+    setModelContextLimit("google/gemini-2.5-pro", 200000);
+
+    await handleSessionIdle(
+      makeConfig({ agents: { big: { largeContextModel: "google/gemini-2.5-pro" } } }),
+      noopLogger,
+      ctx,
+      { type: "session.idle", properties: { sessionID: CHILD } },
+    );
+
+    expect(mockAbort).not.toHaveBeenCalled();
+    expect(mockSummarize).toHaveBeenCalled();
+  });
+
+  it("compaction-summary retry never aborts a child session (issue #4)", async () => {
+    const mockAbort = vi.fn().mockResolvedValue(undefined);
+    const mockSummarize = vi.fn().mockResolvedValue({ data: null });
+    const ctx = childContext({ abort: mockAbort, summarize: mockSummarize });
+
+    setRegisteredAgents(["big"]);
+    setSessionOriginalAgent(CHILD, "big");
+    setLargeContextPhase(CHILD, "summarizing");
+
+    await handleSessionError(
+      makeConfig({ agents: { big: { largeContextModel: "google/gemini-2.5-pro" } } }),
+      noopLogger,
+      ctx,
+      {
+        type: "session.error",
+        properties: {
+          sessionID: CHILD,
+          error: {
+            name: "Error",
+            data: { message: "Tool call not allowed while generating summary" },
+          },
+        },
+      },
+    );
+
+    expect(mockAbort).not.toHaveBeenCalled();
+    expect(mockSummarize).toHaveBeenCalled();
   });
 });

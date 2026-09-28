@@ -13,6 +13,7 @@ import {
   clearActiveFallbackParams,
   clearCompactionTarget,
   clearOpencodeCompacting,
+  consumePluginAbortMark,
   deleteLargeContextPhase,
   deleteRestoreModel,
   getAndClearCompactionTarget,
@@ -29,7 +30,7 @@ import {
 import { isCooldownActive } from "@/state/session-state";
 import { isSameModel } from "@/utils/model";
 import type { Logger } from "@/utils/session-utils";
-import { abortSessionSafely } from "@/utils/session-utils";
+import { prepareSessionForPrompt } from "@/utils/subagent";
 
 import type { PluginInput } from "@opencode-ai/plugin";
 
@@ -66,7 +67,11 @@ export async function handleSessionError(
   }
 
   if (err.name === "MessageAbortedError") {
-    await logger.info("User-initiated abort, ignoring", { sessionID });
+    if (consumePluginAbortMark(sessionID)) {
+      await logger.info("Plugin-initiated abort (fallback/switch), ignoring", { sessionID });
+    } else {
+      await logger.info("User-initiated abort, ignoring", { sessionID });
+    }
     return;
   }
 
@@ -80,7 +85,16 @@ export async function handleSessionError(
     const parsedModel = agent ? getAgentLargeContextModel(config, agent) : null;
 
     if (parsedModel && agent && isRegisteredAgent(agent)) {
-      await abortSessionSafely(sessionID, context);
+      // Aborting a task-tool child session cancels its parent's task call (issue #4) —
+      // children and unknown-ownership sessions are only used once confirmed idle.
+      const recovery = await prepareSessionForPrompt(sessionID, context, logger);
+      if (recovery === "not-ready") {
+        await logger.error(
+          "Context overflow recovery skipped: session not ready for replacement prompt",
+          { sessionID },
+        );
+        return;
+      }
 
       const phase = getLargeContextPhase(sessionID);
 
@@ -173,6 +187,7 @@ export async function handleSessionError(
   if (err.data.message && isPrefillNotSupportedError(err.data.message)) {
     const result = await handlePrefillNotSupportedRetry(sessionID, logger, context);
     if (result === "retried") return;
+    if (result === "not-ready") return;
     await logger.info("Prefill retry exhausted, routing to immediate fallback", { sessionID });
     await handleImmediate(sessionID, config, logger, context);
     return;
@@ -186,12 +201,16 @@ export async function handleSessionError(
     const agent = getSessionOriginalAgent(sessionID);
     const parsedModel = agent ? getAgentLargeContextModel(config, agent) : null;
     if (parsedModel) {
-      await logger.info("Compaction tool call blocked, aborting and retrying summarize", {
+      await logger.info("Compaction tool call blocked, retrying summarize after session prep", {
         sessionID,
         model: `${parsedModel.providerID}/${parsedModel.modelID}`,
       });
       try {
-        await abortSessionSafely(sessionID, context);
+        // Child/unknown-ownership sessions are never aborted here (issue #4).
+        const recovery = await prepareSessionForPrompt(sessionID, context, logger);
+        if (recovery === "not-ready") {
+          throw new Error("session not ready for summarize retry");
+        }
 
         await context.client.session.summarize({
           path: { id: sessionID },

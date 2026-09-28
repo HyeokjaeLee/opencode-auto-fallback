@@ -17,8 +17,12 @@ const selfCompactionCount = new Map<string, number>();
 const returnDeferred = new Set<string>();
 const syntheticPromptActive = new Set<string>();
 const selfCompactionInFlight = new Set<string>();
+/** Sessions the plugin itself aborted — lets session.error attribute MessageAbortedError. */
+const pluginAbortedSessions = new Map<string, number>();
 
 const MAX_SELF_COMPACTION_CYCLES = 2;
+/** Marks older than this are stale and no longer attributed to the plugin. */
+const PLUGIN_ABORT_MARK_TTL_MS = 10_000;
 
 export function setActiveFallbackParams(sessionID: string, model: FallbackModel): void {
   activeFallbackParams.set(sessionID, model);
@@ -189,6 +193,24 @@ export function clearSelfCompactionInFlight(sessionID: string): void {
   selfCompactionInFlight.delete(sessionID);
 }
 
+/** Called right before the plugin aborts a session, to attribute the resulting MessageAbortedError. */
+export function markPluginAbort(sessionID: string): void {
+  pluginAbortedSessions.set(sessionID, Date.now());
+}
+
+/** Single-use: consumes a fresh plugin-abort mark; returns false for absent/stale marks. */
+export function consumePluginAbortMark(sessionID: string): boolean {
+  const markedAt = pluginAbortedSessions.get(sessionID);
+  if (markedAt === undefined) return false;
+  pluginAbortedSessions.delete(sessionID);
+  return Date.now() - markedAt <= PLUGIN_ABORT_MARK_TTL_MS;
+}
+
+/** Clears the mark when the abort request itself failed (no MessageAbortedError will follow). */
+export function clearPluginAbortMark(sessionID: string): void {
+  pluginAbortedSessions.delete(sessionID);
+}
+
 export function getRecoveryModel(sessionID: string): ResolvedModel | undefined {
   return sessionRestoreModel.get(sessionID) ?? largeContextSessions.get(sessionID);
 }
@@ -211,6 +233,7 @@ export function cleanupSession(sessionID: string): void {
   returnDeferred.delete(sessionID);
   syntheticPromptActive.delete(sessionID);
   selfCompactionInFlight.delete(sessionID);
+  pluginAbortedSessions.delete(sessionID);
 }
 
 export function setRegisteredAgents(agents: string[]): void {
@@ -224,8 +247,18 @@ export function isRegisteredAgent(agent: string): boolean {
   return registeredAgentSet.has(normalizeAgentName(agent));
 }
 
-export function hasRegisteredAgents(): boolean {
-  return registeredAgentSet.size > 0;
+const largeContextEligibleAgentSet = new Set<string>();
+
+export function setLargeContextEligibleAgents(agents: string[]): void {
+  largeContextEligibleAgentSet.clear();
+  for (const agent of agents) {
+    largeContextEligibleAgentSet.add(agent);
+  }
+}
+
+/** True when any configured agent has an effective large-context model. */
+export function hasLargeContextEligibleAgents(): boolean {
+  return largeContextEligibleAgentSet.size > 0;
 }
 
 // Distinguishes manual /compact from our internal session.summarize() calls

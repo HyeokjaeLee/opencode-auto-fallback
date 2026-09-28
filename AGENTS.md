@@ -60,14 +60,16 @@ Old `agentFallbacks`/`largeContextFallback` fields ignored — `loadConfig()` on
 ### Inheritance
 
 ```
-agents.<name>.fallback          → agent chain + defaultFallback (deduped)
+agents.<name>.fallback          → explicit agent chain, else defaultFallback
 agents.<name>.largeContextModel → defaultLargeContextModel (false = disabled)
 agents.<name>.minContextRatio   → defaultMinContextRatio (default 0.1)
 ```
 
 ### Agent Registration
 
-Agent is "registered" for large context when listed in `agents` AND has `largeContextModel` (string) or `defaultLargeContextModel` is set. `largeContextModel: false` explicitly opts out.
+Every agent listed in `agents` is registered — including fallback-only agents (a `fallback` chain without `largeContextModel`), so their chain is used and re-sends keep the original agent identity.
+
+Large-context eligibility is separate: an agent is eligible when it has `largeContextModel` (string) or inherits `defaultLargeContextModel`; `largeContextModel: false` explicitly opts out. Native auto-compaction is disabled only when at least one agent is large-context-eligible. Fallback-only configs keep opencode's compaction; in mixed configs, non-eligible agents use the manual-compaction safety net at the threshold.
 
 ### Agent Name Matching
 
