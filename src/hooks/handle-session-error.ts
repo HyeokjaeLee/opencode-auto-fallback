@@ -13,6 +13,7 @@ import {
   clearActiveFallbackParams,
   clearCompactionTarget,
   clearOpencodeCompacting,
+  consumePluginAbortMark,
   deleteLargeContextPhase,
   deleteRestoreModel,
   getAndClearCompactionTarget,
@@ -66,7 +67,11 @@ export async function handleSessionError(
   }
 
   if (err.name === "MessageAbortedError") {
-    await logger.info("User-initiated abort, ignoring", { sessionID });
+    if (consumePluginAbortMark(sessionID)) {
+      await logger.info("Plugin-initiated abort (fallback/switch), ignoring", { sessionID });
+    } else {
+      await logger.info("User-initiated abort, ignoring", { sessionID });
+    }
     return;
   }
 
@@ -173,6 +178,7 @@ export async function handleSessionError(
   if (err.data.message && isPrefillNotSupportedError(err.data.message)) {
     const result = await handlePrefillNotSupportedRetry(sessionID, logger, context);
     if (result === "retried") return;
+    if (result === "not-ready") return;
     await logger.info("Prefill retry exhausted, routing to immediate fallback", { sessionID });
     await handleImmediate(sessionID, config, logger, context);
     return;

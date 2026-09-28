@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { SUBAGENT_IDLE_POLL_INTERVAL_MS, SUBAGENT_IDLE_TIMEOUT_MS } from "@/config/constants";
 import type { FallbackConfig } from "@/config/types";
 import { fallbackToModel, handleImmediate, handleRetry, tryFallbackChain } from "@/core/fallback";
 import { shouldSkipLargeContextFallback } from "@/core/large-context";
@@ -171,6 +172,26 @@ describe("handleImmediate", () => {
     await handleImmediate(SESSION, config, noopLogger, ctx);
 
     expect(mockAbort).toHaveBeenCalled();
+    expect(mockPrompt).toHaveBeenCalledWith(
+      expect.objectContaining({
+        body: expect.objectContaining({
+          model: { providerID: "openai", modelID: "gpt-5.4" },
+        }),
+      }),
+    );
+  });
+
+  it("continues the fallback chain when the abort call rejects (issue #6)", async () => {
+    const mockAbort = vi.fn().mockRejectedValue(new Error("connection refused"));
+    const mockPrompt = vi.fn().mockResolvedValue(undefined);
+    const ctx = createMockContext({ abort: mockAbort, prompt: mockPrompt });
+    const config = makeConfig();
+
+    setCurrentModel(SESSION, "openai", "gpt-5.5");
+    setSessionOriginalAgent(SESSION, "oracle");
+
+    await handleImmediate(SESSION, config, noopLogger, ctx);
+
     expect(mockPrompt).toHaveBeenCalledWith(
       expect.objectContaining({
         body: expect.objectContaining({
@@ -369,5 +390,85 @@ describe("self-compaction counter", () => {
     incrementSelfCompactionCount("session-1");
     cleanupSession("session-1");
     expect(getSelfCompactionCount("session-1")).toBe(0);
+  });
+});
+
+describe("subagent session recovery (issue #4)", () => {
+  const CHILD = "child-session-1";
+
+  afterEach(() => {
+    cleanupSession(CHILD);
+    removeSession(CHILD);
+  });
+
+  function childContext(overrides?: Parameters<typeof createMockContext>[0]) {
+    return createMockContext({
+      get: vi.fn().mockResolvedValue({ data: { id: CHILD, parentID: "parent-1" } }),
+      ...overrides,
+    });
+  }
+
+  it("handleImmediate never aborts a child session and re-prompts it", async () => {
+    const mockAbort = vi.fn().mockResolvedValue(undefined);
+    const mockPrompt = vi.fn().mockResolvedValue(undefined);
+    const ctx = childContext({ abort: mockAbort, prompt: mockPrompt });
+
+    setCurrentModel(CHILD, "openai", "gpt-5.5");
+    setSessionOriginalAgent(CHILD, "oracle");
+
+    await handleImmediate(CHILD, makeConfig(), noopLogger, ctx);
+
+    expect(mockAbort).not.toHaveBeenCalled();
+    expect(mockPrompt).toHaveBeenCalledWith(
+      expect.objectContaining({
+        body: expect.objectContaining({
+          agent: "oracle",
+          model: { providerID: "openai", modelID: "gpt-5.4" },
+        }),
+      }),
+    );
+  });
+
+  it("handleImmediate skips the prompt when a child never becomes idle", async () => {
+    vi.useFakeTimers();
+    try {
+      const mockAbort = vi.fn().mockResolvedValue(undefined);
+      const mockPrompt = vi.fn().mockResolvedValue(undefined);
+      const ctx = childContext({
+        abort: mockAbort,
+        prompt: mockPrompt,
+        status: vi.fn().mockResolvedValue({ data: { [CHILD]: { type: "busy" } } }),
+      });
+
+      setCurrentModel(CHILD, "openai", "gpt-5.5");
+      setSessionOriginalAgent(CHILD, "oracle");
+
+      const pending = handleImmediate(CHILD, makeConfig(), noopLogger, ctx);
+      await vi.advanceTimersByTimeAsync(SUBAGENT_IDLE_TIMEOUT_MS + SUBAGENT_IDLE_POLL_INTERVAL_MS);
+      await pending;
+
+      expect(mockAbort).not.toHaveBeenCalled();
+      expect(mockPrompt).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("handleRetry never aborts a child session and re-prompts it", async () => {
+    const mockAbort = vi.fn().mockResolvedValue(undefined);
+    const mockPrompt = vi.fn().mockResolvedValue(undefined);
+    const ctx = childContext({ abort: mockAbort, prompt: mockPrompt });
+
+    setCurrentModel(CHILD, "openai", "gpt-5.5");
+    setSessionOriginalAgent(CHILD, "oracle");
+
+    await handleRetry(CHILD, makeConfig(), noopLogger, ctx);
+
+    expect(mockAbort).not.toHaveBeenCalled();
+    expect(mockPrompt).toHaveBeenCalledWith(
+      expect.objectContaining({
+        body: expect.objectContaining({ agent: "oracle" }),
+      }),
+    );
   });
 });

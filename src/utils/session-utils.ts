@@ -1,9 +1,9 @@
 import { adaptMessages, getModelFromMessage } from "@/adapters/sdk-adapter";
-import { ABORT_DELAY_MS } from "@/config/constants";
+import { ABORT_DELAY_MS, ABORT_TIMEOUT_MS } from "@/config/constants";
 import type { MessageInfo, MessageWithParts, ToastOptions } from "@/config/types";
 import type { PromptPart } from "@/core/message";
 import { extractUserParts } from "@/core/message";
-import { getCurrentModel } from "@/state/context-state";
+import { clearPluginAbortMark, getCurrentModel, markPluginAbort } from "@/state/context-state";
 
 import { serializeError } from "./error";
 
@@ -60,18 +60,29 @@ export async function showTuiNotification(
   }
 }
 
+/**
+ * Abort is best-effort: a rejecting or hanging SDK call must never block or kill the
+ * fallback flow (issue #6). Always waits ABORT_DELAY_MS before callers send a new prompt.
+ */
 export async function abortSession(sessionID: string, context: PluginInput): Promise<void> {
-  await context.client.session.abort({ path: { id: sessionID } });
+  markPluginAbort(sessionID);
+  const outcome = await Promise.race([
+    context.client.session.abort({ path: { id: sessionID } }).then(
+      () => "resolved" as const,
+      () => "rejected" as const,
+    ),
+    new Promise((resolve) => setTimeout(() => resolve("timeout" as const), ABORT_TIMEOUT_MS)),
+  ]);
+  // On timeout the abort may still land server-side, so keep the mark; a definitive
+  // rejection means no MessageAbortedError will follow.
+  if (outcome === "rejected") {
+    clearPluginAbortMark(sessionID);
+  }
   await new Promise((resolve) => setTimeout(resolve, ABORT_DELAY_MS));
 }
 
 export async function abortSessionSafely(sessionID: string, context: PluginInput): Promise<void> {
-  try {
-    await context.client.session.abort({ path: { id: sessionID } });
-    await new Promise((resolve) => setTimeout(resolve, ABORT_DELAY_MS));
-  } catch {
-    /* session may already be idle */
-  }
+  await abortSession(sessionID, context);
 }
 
 export async function revertLastAssistantMessage(

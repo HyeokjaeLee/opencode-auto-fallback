@@ -27,12 +27,8 @@ import {
 } from "@/utils/fallback-notification";
 import { formatModelKey } from "@/utils/model";
 import type { Logger } from "@/utils/session-utils";
-import {
-  abortSession,
-  abortSessionSafely,
-  revertLastAssistantMessage,
-  showTuiNotification,
-} from "@/utils/session-utils";
+import { revertLastAssistantMessage, showTuiNotification } from "@/utils/session-utils";
+import { prepareSessionForPrompt } from "@/utils/subagent";
 
 import type { PluginInput } from "@opencode-ai/plugin";
 
@@ -62,7 +58,7 @@ export async function fallbackToModel(
       path: { id: sessionID },
       body: {
         model: { providerID: toModel.providerID, modelID: toModel.modelID },
-        agent,
+        ...(agent ? { agent } : {}),
         parts,
         ...(toModel.variant ? { variant: toModel.variant } : {}),
       },
@@ -82,7 +78,7 @@ export async function handlePrefillNotSupportedRetry(
   sessionID: string,
   logger: Logger,
   context: PluginInput,
-): Promise<"retried" | "fallthrough"> {
+): Promise<"retried" | "fallthrough" | "not-ready"> {
   const retryCount = getPrefillRetryCount(sessionID);
 
   if (retryCount > 0) {
@@ -97,7 +93,13 @@ export async function handlePrefillNotSupportedRetry(
     sessionID,
   });
 
-  await abortSessionSafely(sessionID, context);
+  const recovery = await prepareSessionForPrompt(sessionID, context, logger);
+  if (recovery === "not-ready") {
+    await logger.warn("Prefill retry skipped: session not ready for replacement prompt", {
+      sessionID,
+    });
+    return "not-ready";
+  }
 
   await revertLastAssistantMessage(sessionID, context, logger);
 
@@ -205,11 +207,17 @@ export async function handleRetry(
     return;
   }
 
+  const recovery = await prepareSessionForPrompt(sessionID, context, logger);
+  if (recovery === "not-ready") {
+    await logger.error("Retry recovery skipped: session not ready for replacement prompt", {
+      sessionID,
+    });
+    return;
+  }
+
   const backoffLevel = incrementBackoff(sessionID);
   const currentModel = getCurrentModel(sessionID);
   const agent = getSessionOriginalAgent(sessionID);
-
-  await abortSession(sessionID, context);
 
   if (currentModel && backoffLevel <= config.maxRetries) {
     const waitMs = BACKOFF_BASE_MS * 2 ** (backoffLevel - 1);
@@ -285,7 +293,13 @@ export async function handleImmediate(
     });
   }
 
-  await abortSession(sessionID, context);
+  const recovery = await prepareSessionForPrompt(sessionID, context, logger);
+  if (recovery === "not-ready") {
+    await logger.error("Immediate fallback skipped: session not ready for replacement prompt", {
+      sessionID,
+    });
+    return;
+  }
   deleteLargeContextPhase(sessionID);
   const chain = await getValidatedFallbackChain(config, agent, sessionID, logger);
   await logger.info(`Immediate fallback chain (${chain.length} models)`, {

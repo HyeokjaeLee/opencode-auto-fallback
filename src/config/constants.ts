@@ -57,6 +57,27 @@ export const PREFILL_NOT_SUPPORTED_PATTERNS: readonly string[] = [
 /** Delay after aborting a session before sending a new prompt (ms) */
 export const ABORT_DELAY_MS = 300;
 
+/** Max wait for the session.abort SDK call before proceeding anyway (ms) — aborts are best-effort. */
+export const ABORT_TIMEOUT_MS = 5_000;
+
+/** Max wait for a single session.get / session.status SDK call during subagent recovery (ms) */
+export const SUBAGENT_LOOKUP_TIMEOUT_MS = 2_000;
+
+/** Max total wait for a subagent session to become idle before giving up (ms) */
+export const SUBAGENT_IDLE_TIMEOUT_MS = 5_000;
+
+/** Poll interval while waiting for a subagent session to become idle (ms) */
+export const SUBAGENT_IDLE_POLL_INTERVAL_MS = 250;
+
+/** Total window to observe a session for assistant activity after a continuation prompt (ms) */
+export const CONTINUATION_VERIFY_TIMEOUT_MS = 10_000;
+
+/** Poll interval while observing for assistant activity (ms) */
+export const CONTINUATION_VERIFY_POLL_INTERVAL_MS = 1_000;
+
+/** Max wait for a single session.messages observation during continuation monitoring (ms) */
+export const CONTINUATION_OBSERVE_TIMEOUT_MS = 2_000;
+
 export const LARGE_CONTEXT_CONTINUATION = "Continue";
 export const RETURN_CONTINUATION =
   "If there is remaining work from the previous task, continue it. Otherwise, provide a summary of what was completed.";

@@ -15,7 +15,7 @@ import {
   getMaxSelfCompactionCycles,
   getModelContextLimit,
   getSessionOriginalAgent,
-  hasRegisteredAgents,
+  hasLargeContextEligibleAgents,
   incrementSelfCompactionCount,
   isOpencodeCompacting,
   isRegisteredAgent,
@@ -76,25 +76,27 @@ export async function handleSessionIdle(
   if (!phase) {
     if (!agent) return;
 
-    // Non-registered agents (largeContextModel: false): auto-compaction is disabled
-    // globally by the config hook, but this agent opted out of large context fallback.
-    // Trigger manual compact as safety net when context is at threshold.
-    // Only act when the plugin disabled auto-compaction (i.e. other agents have
-    // largeContextModel set). If no agents use largeContextModel, opencode's
-    // native compaction handles everything — don't double-compact.
-    if (!isRegisteredAgent(agent)) {
-      if (!hasRegisteredAgents()) return;
+    // Agents without an effective large model (fallback-only or opted-out):
+    // opencode's native compaction is fine unless the plugin disabled it globally
+    // because another agent is large-context-eligible — then use the manual-compact
+    // safety net at threshold instead of double-compacting.
+    const parsedModel = getAgentLargeContextModel(config, agent);
+    if (!parsedModel) {
+      if (!hasLargeContextEligibleAgents()) return;
 
       const thresholdResult = await checkContextThreshold(props.sessionID, context, logger);
       if (thresholdResult.limit === 0 || !thresholdResult.atThreshold) return;
 
       const curModel = getCurrentModel(props.sessionID);
-      await logger.info("Idle: non-registered agent at context limit, triggering manual compact", {
-        sessionID: props.sessionID,
-        agent,
-        usage: thresholdResult.usage,
-        limit: thresholdResult.limit,
-      });
+      await logger.info(
+        "Idle: no large context model for agent at context limit, triggering manual compact",
+        {
+          sessionID: props.sessionID,
+          agent,
+          usage: thresholdResult.usage,
+          limit: thresholdResult.limit,
+        },
+      );
       try {
         await context.client.session.summarize({
           path: { id: props.sessionID },
@@ -108,15 +110,12 @@ export async function handleSessionIdle(
             : {}),
         });
       } catch {
-        await logger.info("Idle: manual compact failed for non-registered agent", {
+        await logger.info("Idle: manual compact failed for agent without large model", {
           sessionID: props.sessionID,
         });
       }
       return;
     }
-
-    const parsedModel = getAgentLargeContextModel(config, agent);
-    if (!parsedModel) return;
 
     const thresholdResult = await checkContextThreshold(props.sessionID, context, logger);
     if (thresholdResult.limit === 0 || !thresholdResult.atThreshold) return;
