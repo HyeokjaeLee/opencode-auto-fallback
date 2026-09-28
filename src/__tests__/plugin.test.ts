@@ -4,9 +4,11 @@ import { SUBAGENT_IDLE_POLL_INTERVAL_MS, SUBAGENT_IDLE_TIMEOUT_MS } from "@/conf
 import type { FallbackConfig } from "@/config/types";
 import { fallbackToModel, handleImmediate, handleRetry, tryFallbackChain } from "@/core/fallback";
 import { shouldSkipLargeContextFallback } from "@/core/large-context";
+import { handleSessionError } from "@/hooks/handle-session-error";
 import {
   cleanupSession,
   getMaxSelfCompactionCycles,
+  getOrSetOriginalModel,
   getSelfCompactionCount,
   incrementSelfCompactionCount,
   isRegisteredAgent,
@@ -399,6 +401,7 @@ describe("subagent session recovery (issue #4)", () => {
   afterEach(() => {
     cleanupSession(CHILD);
     removeSession(CHILD);
+    setRegisteredAgents([]);
   });
 
   function childContext(overrides?: Parameters<typeof createMockContext>[0]) {
@@ -470,5 +473,95 @@ describe("subagent session recovery (issue #4)", () => {
         body: expect.objectContaining({ agent: "oracle" }),
       }),
     );
+  });
+
+  it("context-overflow recovery never aborts a child session (issue #4)", async () => {
+    const mockAbort = vi.fn().mockResolvedValue(undefined);
+    const mockPrompt = vi.fn().mockResolvedValue(undefined);
+    const ctx = childContext({
+      abort: mockAbort,
+      prompt: mockPrompt,
+      messages: vi.fn().mockResolvedValue({
+        data: [
+          {
+            info: { id: "u1", role: "user", sessionID: CHILD, agent: "big" },
+            parts: [{ type: "text", text: "task" }],
+          },
+          {
+            info: {
+              role: "assistant",
+              tokens: { input: 100, output: 1, reasoning: 0, cache: { read: 0, write: 0 } },
+            },
+            parts: [],
+          },
+        ],
+      }),
+    });
+
+    setRegisteredAgents(["big"]);
+    setSessionOriginalAgent(CHILD, "big");
+    setCurrentModel(CHILD, "anthropic", "claude-sonnet-4");
+    getOrSetOriginalModel(CHILD, "anthropic", "claude-sonnet-4");
+
+    await handleSessionError(
+      makeConfig({ agents: { big: { largeContextModel: "google/gemini-2.5-pro" } } }),
+      noopLogger,
+      ctx,
+      {
+        type: "session.error",
+        properties: {
+          sessionID: CHILD,
+          error: { name: "Error", data: { message: "context length exceeded" } },
+        },
+      },
+    );
+
+    expect(mockAbort).not.toHaveBeenCalled();
+    expect(mockPrompt).toHaveBeenCalledWith(
+      expect.objectContaining({
+        body: expect.objectContaining({
+          model: { providerID: "google", modelID: "gemini-2.5-pro" },
+          agent: "big",
+        }),
+      }),
+    );
+  });
+
+  it("context-overflow recovery skips the prompt when a child never becomes idle", async () => {
+    vi.useFakeTimers();
+    try {
+      const mockAbort = vi.fn().mockResolvedValue(undefined);
+      const mockPrompt = vi.fn().mockResolvedValue(undefined);
+      const ctx = childContext({
+        abort: mockAbort,
+        prompt: mockPrompt,
+        status: vi.fn().mockResolvedValue({ data: { [CHILD]: { type: "busy" } } }),
+      });
+
+      setRegisteredAgents(["big"]);
+      setSessionOriginalAgent(CHILD, "big");
+      setCurrentModel(CHILD, "anthropic", "claude-sonnet-4");
+      getOrSetOriginalModel(CHILD, "anthropic", "claude-sonnet-4");
+
+      const pending = handleSessionError(
+        makeConfig({ agents: { big: { largeContextModel: "google/gemini-2.5-pro" } } }),
+        noopLogger,
+        ctx,
+        {
+          type: "session.error",
+          properties: {
+            sessionID: CHILD,
+            error: { name: "Error", data: { message: "context length exceeded" } },
+          },
+        },
+      );
+      await vi.advanceTimersByTimeAsync(SUBAGENT_IDLE_TIMEOUT_MS + SUBAGENT_IDLE_POLL_INTERVAL_MS);
+      await pending;
+
+      expect(mockAbort).not.toHaveBeenCalled();
+      expect(mockPrompt).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

@@ -31,6 +31,7 @@ import { isCooldownActive } from "@/state/session-state";
 import { isSameModel } from "@/utils/model";
 import type { Logger } from "@/utils/session-utils";
 import { abortSessionSafely } from "@/utils/session-utils";
+import { prepareSessionForPrompt } from "@/utils/subagent";
 
 import type { PluginInput } from "@opencode-ai/plugin";
 
@@ -85,7 +86,16 @@ export async function handleSessionError(
     const parsedModel = agent ? getAgentLargeContextModel(config, agent) : null;
 
     if (parsedModel && agent && isRegisteredAgent(agent)) {
-      await abortSessionSafely(sessionID, context);
+      // Aborting a task-tool child session cancels its parent's task call (issue #4) —
+      // children and unknown-ownership sessions are only used once confirmed idle.
+      const recovery = await prepareSessionForPrompt(sessionID, context, logger);
+      if (recovery === "not-ready") {
+        await logger.error(
+          "Context overflow recovery skipped: session not ready for replacement prompt",
+          { sessionID },
+        );
+        return;
+      }
 
       const phase = getLargeContextPhase(sessionID);
 
