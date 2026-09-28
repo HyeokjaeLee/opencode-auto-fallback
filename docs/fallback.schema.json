@@ -73,7 +73,7 @@
       "description": "Per-agent settings. Omitted fields inherit from top-level defaults.",
       "properties": {
         "fallback": {
-          "description": "Agent-specific fallback model chain. Tried first, then defaultFallback models not already in this chain (deduped by providerID/modelID).",
+          "description": "Agent-specific fallback model chain. Used instead of defaultFallback when set. Any agent listed in the agents map is registered for fallback identity, with or without a largeContextModel.",
           "oneOf": [
             {
               "type": "array",
