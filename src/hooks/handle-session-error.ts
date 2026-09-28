@@ -30,7 +30,6 @@ import {
 import { isCooldownActive } from "@/state/session-state";
 import { isSameModel } from "@/utils/model";
 import type { Logger } from "@/utils/session-utils";
-import { abortSessionSafely } from "@/utils/session-utils";
 import { prepareSessionForPrompt } from "@/utils/subagent";
 
 import type { PluginInput } from "@opencode-ai/plugin";
@@ -202,12 +201,16 @@ export async function handleSessionError(
     const agent = getSessionOriginalAgent(sessionID);
     const parsedModel = agent ? getAgentLargeContextModel(config, agent) : null;
     if (parsedModel) {
-      await logger.info("Compaction tool call blocked, aborting and retrying summarize", {
+      await logger.info("Compaction tool call blocked, retrying summarize after session prep", {
         sessionID,
         model: `${parsedModel.providerID}/${parsedModel.modelID}`,
       });
       try {
-        await abortSessionSafely(sessionID, context);
+        // Child/unknown-ownership sessions are never aborted here (issue #4).
+        const recovery = await prepareSessionForPrompt(sessionID, context, logger);
+        if (recovery === "not-ready") {
+          throw new Error("session not ready for summarize retry");
+        }
 
         await context.client.session.summarize({
           path: { id: sessionID },

@@ -30,7 +30,8 @@ import { isModelInCooldown } from "@/state/provider-state";
 import { checkContextThreshold } from "@/utils/context";
 import { formatModelKey, isSameModel } from "@/utils/model";
 import type { Logger } from "@/utils/session-utils";
-import { abortSessionSafely, fetchSessionData } from "@/utils/session-utils";
+import { fetchSessionData } from "@/utils/session-utils";
+import { prepareSessionForPrompt } from "@/utils/subagent";
 
 import type { PluginInput } from "@opencode-ai/plugin";
 
@@ -200,7 +201,11 @@ export async function handleSessionIdle(
         });
         setCompactionTarget(props.sessionID, "large");
         try {
-          await abortSessionSafely(props.sessionID, context);
+          // Child/unknown-ownership sessions are never aborted here (issue #4).
+          const recovery = await prepareSessionForPrompt(props.sessionID, context, logger);
+          if (recovery === "not-ready") {
+            throw new Error("session not ready for self-compaction");
+          }
 
           await context.client.session.summarize({
             path: { id: props.sessionID },

@@ -35,7 +35,8 @@ import {
 } from "@/utils/fallback-notification";
 import { formatModelKey } from "@/utils/model";
 import type { Logger } from "@/utils/session-utils";
-import { abortSessionSafely, fetchSessionData, showTuiNotification } from "@/utils/session-utils";
+import { fetchSessionData, showTuiNotification } from "@/utils/session-utils";
+import { prepareSessionForPrompt } from "@/utils/subagent";
 
 import type { PluginInput } from "@opencode-ai/plugin";
 
@@ -245,7 +246,15 @@ export async function handleLargeContextReturn(
   setLargeContextPhase(sessionID, "summarizing");
 
   try {
-    await abortSessionSafely(sessionID, context);
+    // Child/unknown-ownership sessions are never aborted here (issue #4).
+    const recovery = await prepareSessionForPrompt(sessionID, context, logger);
+    if (recovery === "not-ready") {
+      await logger.error("Return: session not ready for switch-back compaction, clearing phase", {
+        sessionID,
+      });
+      deleteLargeContextPhase(sessionID);
+      return;
+    }
 
     await context.client.session.summarize({
       path: { id: sessionID },

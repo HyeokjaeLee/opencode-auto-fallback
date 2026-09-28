@@ -5,6 +5,7 @@ import type { FallbackConfig } from "@/config/types";
 import { fallbackToModel, handleImmediate, handleRetry, tryFallbackChain } from "@/core/fallback";
 import { shouldSkipLargeContextFallback } from "@/core/large-context";
 import { handleSessionError } from "@/hooks/handle-session-error";
+import { handleSessionIdle } from "@/hooks/handle-session-idle";
 import {
   cleanupSession,
   getMaxSelfCompactionCycles,
@@ -13,8 +14,12 @@ import {
   incrementSelfCompactionCount,
   isRegisteredAgent,
   resetSelfCompactionCount,
+  setCompactionTarget,
   setCurrentModel,
+  setLargeContextPhase,
+  setModelContextLimit,
   setRegisteredAgents,
+  setRestoreModel,
   setSessionOriginalAgent,
 } from "@/state/context-state";
 import { isModelInCooldown } from "@/state/provider-state";
@@ -527,41 +532,102 @@ describe("subagent session recovery (issue #4)", () => {
     );
   });
 
-  it("context-overflow recovery skips the prompt when a child never becomes idle", async () => {
-    vi.useFakeTimers();
-    try {
-      const mockAbort = vi.fn().mockResolvedValue(undefined);
-      const mockPrompt = vi.fn().mockResolvedValue(undefined);
-      const ctx = childContext({
-        abort: mockAbort,
-        prompt: mockPrompt,
-        status: vi.fn().mockResolvedValue({ data: { [CHILD]: { type: "busy" } } }),
-      });
+  it("active-phase child overflow never aborts a child session (issue #4)", async () => {
+    const mockAbort = vi.fn().mockResolvedValue(undefined);
+    const mockSummarize = vi.fn().mockResolvedValue({ data: null });
+    const ctx = childContext({ abort: mockAbort, summarize: mockSummarize });
 
-      setRegisteredAgents(["big"]);
-      setSessionOriginalAgent(CHILD, "big");
-      setCurrentModel(CHILD, "anthropic", "claude-sonnet-4");
-      getOrSetOriginalModel(CHILD, "anthropic", "claude-sonnet-4");
+    setRegisteredAgents(["big"]);
+    setSessionOriginalAgent(CHILD, "big");
+    setCurrentModel(CHILD, "anthropic", "claude-sonnet-4");
+    getOrSetOriginalModel(CHILD, "anthropic", "claude-sonnet-4");
+    setRestoreModel(CHILD, "anthropic", "claude-sonnet-4");
+    setLargeContextPhase(CHILD, "active");
+    setCompactionTarget(CHILD, "default");
 
-      const pending = handleSessionError(
-        makeConfig({ agents: { big: { largeContextModel: "google/gemini-2.5-pro" } } }),
-        noopLogger,
-        ctx,
-        {
-          type: "session.error",
-          properties: {
-            sessionID: CHILD,
-            error: { name: "Error", data: { message: "context length exceeded" } },
+    await handleSessionError(
+      makeConfig({ agents: { big: { largeContextModel: "google/gemini-2.5-pro" } } }),
+      noopLogger,
+      ctx,
+      {
+        type: "session.error",
+        properties: {
+          sessionID: CHILD,
+          error: { name: "Error", data: { message: "context length exceeded" } },
+        },
+      },
+    );
+
+    expect(mockAbort).not.toHaveBeenCalled();
+    expect(mockSummarize).toHaveBeenCalledWith(
+      expect.objectContaining({
+        body: { providerID: "google", modelID: "gemini-2.5-pro" },
+      }),
+    );
+  });
+
+  it("idle self-compaction never aborts a child session (issue #4)", async () => {
+    const mockAbort = vi.fn().mockResolvedValue(undefined);
+    const mockSummarize = vi.fn().mockResolvedValue({ data: null });
+    const ctx = childContext({
+      abort: mockAbort,
+      summarize: mockSummarize,
+      messages: vi.fn().mockResolvedValue({
+        data: [
+          {
+            info: {
+              role: "assistant",
+              tokens: { input: 199600, output: 50, reasoning: 50, cache: { read: 0, write: 0 } },
+            },
+            parts: [],
+          },
+        ],
+      }),
+    });
+
+    setRegisteredAgents(["big"]);
+    setSessionOriginalAgent(CHILD, "big");
+    setLargeContextPhase(CHILD, "active");
+    setCurrentModel(CHILD, "google", "gemini-2.5-pro");
+    setModelContextLimit("google/gemini-2.5-pro", 200000);
+
+    await handleSessionIdle(
+      makeConfig({ agents: { big: { largeContextModel: "google/gemini-2.5-pro" } } }),
+      noopLogger,
+      ctx,
+      { type: "session.idle", properties: { sessionID: CHILD } },
+    );
+
+    expect(mockAbort).not.toHaveBeenCalled();
+    expect(mockSummarize).toHaveBeenCalled();
+  });
+
+  it("compaction-summary retry never aborts a child session (issue #4)", async () => {
+    const mockAbort = vi.fn().mockResolvedValue(undefined);
+    const mockSummarize = vi.fn().mockResolvedValue({ data: null });
+    const ctx = childContext({ abort: mockAbort, summarize: mockSummarize });
+
+    setRegisteredAgents(["big"]);
+    setSessionOriginalAgent(CHILD, "big");
+    setLargeContextPhase(CHILD, "summarizing");
+
+    await handleSessionError(
+      makeConfig({ agents: { big: { largeContextModel: "google/gemini-2.5-pro" } } }),
+      noopLogger,
+      ctx,
+      {
+        type: "session.error",
+        properties: {
+          sessionID: CHILD,
+          error: {
+            name: "Error",
+            data: { message: "Tool call not allowed while generating summary" },
           },
         },
-      );
-      await vi.advanceTimersByTimeAsync(SUBAGENT_IDLE_TIMEOUT_MS + SUBAGENT_IDLE_POLL_INTERVAL_MS);
-      await pending;
+      },
+    );
 
-      expect(mockAbort).not.toHaveBeenCalled();
-      expect(mockPrompt).not.toHaveBeenCalled();
-    } finally {
-      vi.useRealTimers();
-    }
+    expect(mockAbort).not.toHaveBeenCalled();
+    expect(mockSummarize).toHaveBeenCalled();
   });
 });

@@ -45,7 +45,7 @@ import { createLogger } from "@/utils/log";
 import { formatModelKey, isSameModel } from "@/utils/model";
 import type { Logger } from "@/utils/session-utils";
 import { abortSessionSafely, showToastSafely } from "@/utils/session-utils";
-import { isSubagentSession } from "@/utils/subagent";
+import { isSubagentSession, prepareSessionForPrompt } from "@/utils/subagent";
 import { checkForUpdates, tryInstallUpdate } from "@/utils/update-checker";
 import { version as currentVersion } from "~/package.json";
 
@@ -272,7 +272,7 @@ function createChatParamsHandler(
                 lcfParsed,
               )
             ) {
-              await logger.info("Model changed from large model, aborting generation", {
+              await logger.info("Model changed from large model, restarting generation", {
                 sessionID: input.sessionID,
                 fromModel: formatModelKey(prev),
                 toModel: formatModelKey({
@@ -282,7 +282,13 @@ function createChatParamsHandler(
                 phase,
               });
               setRestoreModel(input.sessionID, input.model.providerID, input.model.id);
-              await abortSessionSafely(input.sessionID, context);
+              // Child/unknown-ownership sessions are never aborted here (issue #4).
+              const recovery = await prepareSessionForPrompt(input.sessionID, context, logger);
+              if (recovery === "not-ready") {
+                await logger.warn("Model changed from large model, but session not ready", {
+                  sessionID: input.sessionID,
+                });
+              }
               return;
             }
           }
