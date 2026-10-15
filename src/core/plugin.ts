@@ -12,6 +12,8 @@ import {
 } from "@/config/constants";
 import type { FallbackConfig } from "@/config/types";
 import { handleLargeContextSwitch, shouldSkipLargeContextFallback } from "@/core/large-context";
+import { enforceCompactionBoundary } from "@/core/message";
+import type { PromptInputMessage } from "@/core/message";
 import { createEventHandler } from "@/hooks/events";
 import {
   deleteSessionCooldownModel,
@@ -25,6 +27,7 @@ import {
   getSessionOriginalAgent,
   hasModelChanged,
   isRegisteredAgent,
+  markNativeCompaction,
   setCurrentModel,
   setModelContextLimit,
   setModelInputLimit,
@@ -61,6 +64,8 @@ type PluginHooks = Hooks & {
     output: { enabled: boolean },
   ) => Promise<void>;
 };
+
+type MessagesTransformHook = NonNullable<Hooks["experimental.chat.messages.transform"]>;
 
 interface ChatParamsModel {
   providerID: string;
@@ -203,6 +208,8 @@ export async function createPlugin(context: PluginInput): Promise<PluginHooks> {
     "chat.params": createChatParamsHandler(config, logger, context),
 
     "experimental.session.compacting": createCompactingHandler(config, logger),
+
+    "experimental.chat.messages.transform": createMessagesTransformHandler(logger),
 
     "experimental.compaction.autocontinue": createAutocontinueHandler(logger),
 
@@ -431,6 +438,10 @@ function createCompactingHandler(
   logger: Logger,
 ): (input: CompactingInput, output: CompactingOutput) => Promise<void> {
   return async (input: CompactingInput, output: CompactingOutput): Promise<void> => {
+    // Tracks in-flight native compaction for every phase, so the replay path
+    // can hold off aborting until the compaction pair is durably persisted.
+    markNativeCompaction(input.sessionID);
+
     const phase = getLargeContextPhase(input.sessionID);
 
     if (phase === "summarizing") {
@@ -486,6 +497,27 @@ function createCompactingHandler(
         sessionID: input.sessionID,
       });
     }
+  };
+}
+
+function createMessagesTransformHandler(logger: Logger): MessagesTransformHook {
+  return async (_input, output) => {
+    // SAFETY: elements are the same message objects; the server payload carries
+    // fields (compaction tail_start_id) the installed SDK types omit, so the
+    // pure function sees a minimal structural view instead of SDK types.
+    const messages = output.messages as unknown as PromptInputMessage[];
+    const result = enforceCompactionBoundary(messages);
+    if (result.cutCount === 0) return;
+    // prompt.ts discards this hook's return value — the cut must be applied in place.
+    // SAFETY: result.messages reuses the exact objects read from output.messages.
+    output.messages.splice(
+      0,
+      output.messages.length,
+      ...(result.messages as unknown as typeof output.messages),
+    );
+    await logger.warn("Re-applied compaction boundary (upstream boundary not recognized)", {
+      cutCount: result.cutCount,
+    });
   };
 }
 

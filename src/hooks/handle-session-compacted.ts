@@ -3,6 +3,7 @@ import { LARGE_CONTEXT_CONTINUATION } from "@/config/constants";
 import type { FallbackConfig } from "@/config/types";
 import { handleLargeContextCompletion, handleLargeContextReturn } from "@/core/large-context";
 import {
+  clearNativeCompaction,
   clearOpencodeCompacting,
   clearSyntheticPromptActive,
   deleteLargeContextPhase,
@@ -33,6 +34,7 @@ export async function handleSessionCompacted(
     phase,
   });
 
+  clearNativeCompaction(props.sessionID);
   clearOpencodeCompacting(props.sessionID);
 
   if (phase === "summarizing") {

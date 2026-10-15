@@ -1,8 +1,12 @@
 import {
+  COMPACTION_WAIT_POLL_INTERVAL_MS,
+  COMPACTION_WAIT_TIMEOUT_MS,
   SUBAGENT_IDLE_POLL_INTERVAL_MS,
   SUBAGENT_IDLE_TIMEOUT_MS,
   SUBAGENT_LOOKUP_TIMEOUT_MS,
 } from "@/config/constants";
+import { isNativeCompactionInFlight } from "@/state/context-state";
+import { waitForNativeCompaction } from "@/utils/compaction-wait";
 import { serializeError } from "@/utils/error";
 import type { Logger } from "@/utils/session-utils";
 import { abortSession } from "@/utils/session-utils";
@@ -114,6 +118,22 @@ export async function prepareSessionForPrompt(
   context: PluginInput,
   logger: Logger,
 ): Promise<SessionRecovery> {
+  // Aborting mid-compaction breaks the compaction pair upstream, permanently
+  // corrupting context filtering — let the native compaction land first.
+  if (isNativeCompactionInFlight(sessionID)) {
+    await logger.info("Native compaction in flight, waiting before abort/replay", { sessionID });
+    const completed = await waitForNativeCompaction(
+      () => isNativeCompactionInFlight(sessionID),
+      COMPACTION_WAIT_TIMEOUT_MS,
+      COMPACTION_WAIT_POLL_INTERVAL_MS,
+    );
+    if (!completed) {
+      await logger.warn("Native compaction did not complete in time, proceeding with replay", {
+        sessionID,
+      });
+    }
+  }
+
   const isChild = await isSubagentSession(sessionID, context, logger);
   if (isChild === false) {
     await abortSession(sessionID, context);
