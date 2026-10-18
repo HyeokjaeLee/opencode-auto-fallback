@@ -82,6 +82,12 @@ export const LARGE_CONTEXT_CONTINUATION = "Continue";
 export const RETURN_CONTINUATION =
   "If there is remaining work from the previous task, continue it. Otherwise, provide a summary of what was completed.";
 
+/** Max wait for an in-flight native compaction to finish before proceeding with the fallback replay (ms) */
+export const COMPACTION_WAIT_TIMEOUT_MS = 60_000;
+
+/** Poll interval while waiting for an in-flight native compaction (ms) */
+export const COMPACTION_WAIT_POLL_INTERVAL_MS = 500;
+
 export const COMPACTION_FALLBACK_TOKEN_LIMIT = 30_000;
 
 /** Duration for standard toast notifications (ms) */

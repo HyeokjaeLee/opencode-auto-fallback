@@ -17,6 +17,7 @@ const selfCompactionCount = new Map<string, number>();
 const returnDeferred = new Set<string>();
 const syntheticPromptActive = new Set<string>();
 const selfCompactionInFlight = new Set<string>();
+const nativeCompactionInFlight = new Set<string>();
 /** Sessions the plugin itself aborted — lets session.error attribute MessageAbortedError. */
 const pluginAbortedSessions = new Map<string, number>();
 
@@ -193,6 +194,18 @@ export function clearSelfCompactionInFlight(sessionID: string): void {
   selfCompactionInFlight.delete(sessionID);
 }
 
+export function markNativeCompaction(sessionID: string): void {
+  nativeCompactionInFlight.add(sessionID);
+}
+
+export function isNativeCompactionInFlight(sessionID: string): boolean {
+  return nativeCompactionInFlight.has(sessionID);
+}
+
+export function clearNativeCompaction(sessionID: string): void {
+  nativeCompactionInFlight.delete(sessionID);
+}
+
 /** Called right before the plugin aborts a session, to attribute the resulting MessageAbortedError. */
 export function markPluginAbort(sessionID: string): void {
   pluginAbortedSessions.set(sessionID, Date.now());
@@ -233,6 +246,7 @@ export function cleanupSession(sessionID: string): void {
   returnDeferred.delete(sessionID);
   syntheticPromptActive.delete(sessionID);
   selfCompactionInFlight.delete(sessionID);
+  nativeCompactionInFlight.delete(sessionID);
   pluginAbortedSessions.delete(sessionID);
 }
 
